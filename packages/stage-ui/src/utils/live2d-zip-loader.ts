@@ -8,16 +8,24 @@ import { Cubism4ModelSettings, ModelSettings as ModelSettingsClass, ZipLoader } 
 // NOTICE: Patch to handle UTF-8 encoded file paths in model settings
 const originalValidateFiles = ModelSettingsClass.prototype.validateFiles
 ModelSettingsClass.prototype.validateFiles = function (files: string[]): string[] {
-  const normalizedFiles = files.map((f) => {
-    try {
-      return decodeURI(f)
+  const fileSet = new Set(files)
+  const tryDecode = (s: string) => {
+    try { return decodeURI(s) }
+    catch { return s }
+  }
+  files.forEach(f => fileSet.add(tryDecode(f)))
+
+  const originalResolveURL = this.resolveURL.bind(this)
+  this.resolveURL = (path: string): string => {
+    for (const candidate of [originalResolveURL(path), tryDecode(originalResolveURL(path)), path]) {
+      if (fileSet.has(candidate))
+        return candidate
     }
-    catch {
-      // Not a valid URI, return original string.
-      return f
-    }
-  })
-  return originalValidateFiles.call(this, normalizedFiles)
+    return originalResolveURL(path)
+  }
+
+  try { return originalValidateFiles.call(this, Array.from(fileSet)) }
+  finally { this.resolveURL = originalResolveURL }
 }
 
 ZipLoader.zipReader = (data: Blob, _url: string) => JSZip.loadAsync(data)
