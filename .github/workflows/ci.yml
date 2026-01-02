@@ -14,7 +14,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-swiftlint
       - uses: pnpm/action-setup@v3
       - uses: actions/setup-node@v5
         with:
@@ -23,6 +24,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
+      - run: pnpm run lint:swift
 
   build-test:
     name: Build Test (${{ matrix.app_name }})
@@ -44,7 +46,7 @@ jobs:
 
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       # Turborepo
       - name: Cache turbo build setup
@@ -72,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ !(github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.label, 'moeru-ai:i18n/')) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       # Node.js
       - uses: pnpm/action-setup@v3
@@ -88,7 +90,7 @@ jobs:
     name: Check Provenance
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: danielroe/provenance-action@main

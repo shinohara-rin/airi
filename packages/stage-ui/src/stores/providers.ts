@@ -7,7 +7,7 @@ import type {
   SpeechProviderWithExtraOptions,
   TranscriptionProvider,
   TranscriptionProviderWithExtraOptions,
-} from '@xsai-ext/shared-providers'
+} from '@xsai-ext/providers/utils'
 import type { ProgressInfo } from '@xsai-transformers/shared/types'
 import type {
   UnAlibabaCloudOptions,
@@ -22,31 +22,29 @@ import type { AliyunRealtimeSpeechExtraOptions } from './providers/aliyun/stream
 import { isStageTamagotchi, isUrl } from '@proj-airi/stage-shared'
 import { computedAsync, useLocalStorage } from '@vueuse/core'
 import {
-  createAzure,
   createCerebras,
   createDeepSeek,
   createFireworks,
   createGoogleGenerativeAI,
   createMistral,
-  createMoonshot,
+  createMoonshotai,
   createNovita,
+  createOllama,
   createOpenAI,
   createOpenRouter,
   createPerplexity,
   createTogetherAI,
-  createWorkersAI,
-  createXAI,
-} from '@xsai-ext/providers-cloud'
-import { createOllama, createPlayer2 } from '@xsai-ext/providers-local'
+  createXai,
+} from '@xsai-ext/providers/create'
+import { createAzure, createPlayer2, createWorkersAI } from '@xsai-ext/providers/special/create'
 import {
   createChatProvider,
   createEmbedProvider,
-  createMetadataProvider,
   createModelProvider,
   createSpeechProvider,
   createTranscriptionProvider,
   merge,
-} from '@xsai-ext/shared-providers'
+} from '@xsai-ext/providers/utils'
 import { listModels } from '@xsai/model'
 import { isWebGPUSupported } from 'gpuu/webgpu'
 import { defineStore } from 'pinia'
@@ -208,7 +206,6 @@ function createAnthropic(apiKey: string, baseURL: string = 'https://api.anthropi
   }
 
   return merge(
-    createMetadataProvider('anthropic'),
     /** @see {@link https://docs.anthropic.com/en/docs/about-claude/models/all-models} */
     createChatProvider({ apiKey, fetch: anthropicFetch, baseURL }),
     createModelProvider({ apiKey, fetch: anthropicFetch, baseURL }),
@@ -218,6 +215,7 @@ function createAnthropic(apiKey: string, baseURL: string = 'https://api.anthropi
 export const useProvidersStore = defineStore('providers', () => {
   const providerCredentials = useLocalStorage<Record<string, Record<string, unknown>>>('settings/credentials/providers', {})
   const addedProviders = useLocalStorage<Record<string, boolean>>('settings/providers/added', {})
+  const providerInstanceCache = ref<Record<string, unknown>>({})
   const { t } = useI18n()
   const baseUrlValidator = computed(() => (baseUrl: unknown) => {
     let msg = ''
@@ -654,6 +652,17 @@ export const useProvidersStore = defineStore('providers', () => {
         },
       },
     },
+    'groq': buildOpenAICompatibleProvider({
+      id: 'groq',
+      name: 'Groq',
+      nameKey: 'settings.pages.providers.provider.groq.title',
+      descriptionKey: 'settings.pages.providers.provider.groq.description',
+      icon: 'i-lobe-icons:groq',
+      description: 'groq.com',
+      defaultBaseUrl: 'https://api.groq.com/openai/v1/',
+      creator: createOpenAI,
+      validation: ['model_list'],
+    }),
     'openai': buildOpenAICompatibleProvider({
       id: 'openai',
       name: 'OpenAI',
@@ -904,9 +913,17 @@ export const useProvidersStore = defineStore('providers', () => {
         const provider = createAliyunNlsStreamProvider(accessKeyId, accessKeySecret, appKey, { region: resolvedRegion })
 
         return {
-          transcription(model: string, extraOptions?: AliyunRealtimeSpeechExtraOptions) {
-            return provider.speech(model, extraOptions)
-          },
+          transcription: (model: string, extraOptions?: AliyunRealtimeSpeechExtraOptions) => provider.speech(model, {
+            ...extraOptions,
+            sessionOptions: {
+              format: 'pcm',
+              sample_rate: 16000,
+              enable_punctuation_prediction: true,
+              enable_intermediate_result: true,
+              enable_words: true,
+              ...extraOptions?.sessionOptions,
+            },
+          }),
         } as TranscriptionProviderWithExtraOptions<string, AliyunRealtimeSpeechExtraOptions>
       },
       capabilities: {
@@ -1492,7 +1509,7 @@ export const useProvidersStore = defineStore('providers', () => {
       icon: 'i-lobe-icons:xai',
       description: 'x.ai',
       defaultBaseUrl: 'https://api.x.ai/v1/',
-      creator: createXAI,
+      creator: createXai,
       validation: ['health', 'model_list'],
     }),
     'vllm': {
@@ -1600,7 +1617,7 @@ export const useProvidersStore = defineStore('providers', () => {
       description: 'novita.ai',
       defaultBaseUrl: 'https://api.novita.ai/openai/',
       creator: createNovita,
-      validation: ['health', 'model_list', 'chat_completions'],
+      validation: ['health', 'model_list'],
       iconColor: 'i-lobe-icons:novita',
     }),
     'fireworks-ai': buildOpenAICompatibleProvider({
@@ -1700,7 +1717,7 @@ export const useProvidersStore = defineStore('providers', () => {
       icon: 'i-lobe-icons:moonshot',
       description: 'moonshot.ai',
       defaultBaseUrl: 'https://api.moonshot.ai/v1/',
-      creator: createMoonshot,
+      creator: createMoonshotai,
       validation: ['health', 'model_list'],
     }),
     'modelscope': buildOpenAICompatibleProvider({
@@ -1712,7 +1729,7 @@ export const useProvidersStore = defineStore('providers', () => {
       description: 'modelscope',
       defaultBaseUrl: 'https://api-inference.modelscope.cn/v1/',
       creator: createOpenAI,
-      validation: ['health', 'model_list', 'chat_completions'],
+      validation: ['health', 'model_list'],
       iconColor: 'i-lobe-icons:modelscope',
     }),
     'player2': {
@@ -1875,16 +1892,17 @@ export const useProvidersStore = defineStore('providers', () => {
     },
   }
 
+  // const validatedCredentials = ref<Record<string, string>>({})
+  const providerRuntimeState = ref<Record<string, ProviderRuntimeState>>({})
+
   const configuredProviders = computed(() => {
     const result: Record<string, boolean> = {}
     for (const [key, state] of Object.entries(providerRuntimeState.value)) {
       result[key] = state.isConfigured
     }
+
     return result
   })
-
-  // const validatedCredentials = ref<Record<string, string>>({})
-  const providerRuntimeState = ref<Record<string, ProviderRuntimeState>>({})
 
   function markProviderAdded(providerId: string) {
     addedProviders.value[providerId] = true
@@ -2107,6 +2125,9 @@ export const useProvidersStore = defineStore('providers', () => {
     )
 
     for (const providerId of changedProviders) {
+      // Since credentials changed, dispose the cached instance so new creds take effect.
+      void disposeProviderInstance(providerId)
+
       // If the provider is configured and has the capability, refetch its models
       if (providerRuntimeState.value[providerId]?.isConfigured && providerMetadata[providerId]?.capabilities.listModels) {
         fetchModelsForProvider(providerId)
@@ -2160,6 +2181,10 @@ export const useProvidersStore = defineStore('providers', () => {
   | TranscriptionProvider
   | TranscriptionProviderWithExtraOptions,
   >(providerId: string): Promise<R> {
+    const cached = providerInstanceCache.value[providerId] as R | undefined
+    if (cached)
+      return cached
+
     const config = providerCredentials.value[providerId]
     if (!config)
       throw new Error(`Provider credentials for ${providerId} not found`)
@@ -2169,12 +2194,22 @@ export const useProvidersStore = defineStore('providers', () => {
       throw new Error(`Provider metadata for ${providerId} not found`)
 
     try {
-      return await metadata.createProvider(config) as R
+      const instance = await metadata.createProvider(config) as R
+      providerInstanceCache.value[providerId] = instance
+      return instance
     }
     catch (error) {
       console.error(`Error creating provider instance for ${providerId}:`, error)
       throw error
     }
+  }
+
+  async function disposeProviderInstance(providerId: string) {
+    const instance = providerInstanceCache.value[providerId] as { dispose?: () => Promise<void> | void } | undefined
+    if (instance?.dispose)
+      await instance.dispose()
+
+    delete providerInstanceCache.value[providerId]
   }
 
   const availableProvidersMetadata = computedAsync<ProviderMetadata[]>(async () => {
@@ -2273,6 +2308,7 @@ export const useProvidersStore = defineStore('providers', () => {
     allAvailableModels,
     loadModelsForConfiguredProviders,
     getProviderInstance,
+    disposeProviderInstance,
     resetProviderSettings,
     forceProviderConfigured,
     availableProvidersMetadata,
