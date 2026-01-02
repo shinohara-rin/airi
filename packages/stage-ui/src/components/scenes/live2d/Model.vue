@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Application } from '@pixi/app'
+import type { MotionManager } from 'pixi-live2d-display/cubism4'
 
 import type { PixiLive2DInternalModel } from '../../../composables/live2d'
 
@@ -237,11 +238,11 @@ async function loadModel() {
 
     const internalModel = model.value.internalModel
     const coreModel = internalModel.coreModel
-    const motionManager = internalModel.motionManager as any
+    const motionManager = internalModel.motionManager as MotionManager<any, any>
     coreModel.setParameterValueById('ParamMouthOpenY', mouthOpenSize.value)
 
     availableMotions.value = Object
-      .entries(motionManager.definitions as Record<string, any[]>)
+      .entries(motionManager.definitions)
       .flatMap(([motionName, definition]) => (definition?.map((motion: any, index: number) => ({
         motionName,
         motionIndex: index,

@@ -76,8 +76,6 @@ function handleMotionShuffle() {
   currentMotion.value = { group: 'Idle' }
 
   showMotionSelector.value = false
-
-  console.info('✅ Selected shuffle mode')
 }
 
 // Function to reset all parameters to default values
