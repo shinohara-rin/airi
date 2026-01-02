@@ -27,6 +27,17 @@ import { Emotion, EmotionNeutralMotionName } from '../../../constants/emotions'
 import { useLive2d } from '../../../stores/live2d'
 import { useSettings } from '../../../stores/settings'
 
+type ExtendedMotionManager = MotionManager<any, any> & {
+  idleMotionGroup?: string
+  definitions: Record<string, any[]>
+  groups: {
+    idle?: string
+    Idle?: string
+    [key: string]: any
+  }
+  motionGroups: Record<string, any[]>
+}
+
 const props = withDefaults(defineProps<{
   modelSrc?: string
   modelId?: string
@@ -240,7 +251,8 @@ async function loadModel() {
 
     const internalModel = model.value.internalModel
     const coreModel = internalModel.coreModel
-    const motionManager = internalModel.motionManager as MotionManager<any, any>
+
+    const motionManager = internalModel.motionManager as ExtendedMotionManager
     coreModel.setParameterValueById('ParamMouthOpenY', mouthOpenSize.value)
 
     availableMotions.value = Object
@@ -283,15 +295,18 @@ async function loadModel() {
     // FIXME: it cannot blink if loading a model only have idle motion
     const idleGroupName = motionManager.groups.idle ? 'idle' : (motionManager.groups.Idle ? 'Idle' : undefined)
     if (idleGroupName) {
-      motionManager.idleMotionGroup = idleGroupName
-      motionManager.motionGroups[motionManager.groups[idleGroupName]]?.forEach((motion: any) => {
-        motion._motionData.curves.forEach((curve: any) => {
-        // TODO: After emotion mapper, stage editor, eye related parameters should be take cared to be dynamical instead of hardcoding
-          if (curve.id === 'ParamEyeBallX' || curve.id === 'ParamEyeBallY') {
-            curve.id = `_${curve.id}`
-          }
+      const groupTarget = motionManager.groups[idleGroupName]
+      if (groupTarget !== undefined) {
+        motionManager.idleMotionGroup = idleGroupName
+        motionManager.motionGroups[groupTarget]?.forEach((motion: any) => {
+          motion._motionData.curves.forEach((curve: any) => {
+            // TODO: After emotion mapper, stage editor, eye related parameters should be take cared to be dynamical instead of hardcoding
+            if (curve.id === 'ParamEyeBallX' || curve.id === 'ParamEyeBallY') {
+              curve.id = `_${curve.id}`
+            }
+          })
         })
-      })
+      }
     }
 
     // This is hacky too
