@@ -19,6 +19,7 @@ import { toast, Toaster } from 'vue-sonner'
 import PerformanceOverlay from './components/Devtools/PerformanceOverlay.vue'
 
 import { usePWAStore } from './stores/pwa'
+import { applyIOSSilentModeFix } from './utils/ios-silent-mode-fix'
 
 usePWAStore()
 
@@ -82,6 +83,8 @@ onMounted(async () => {
 
   await displayModelsStore.loadDisplayModelsFromIndexedDB()
   await settingsStore.initializeStageModel()
+
+  applyIOSSilentModeFix()
 })
 
 onUnmounted(() => {
