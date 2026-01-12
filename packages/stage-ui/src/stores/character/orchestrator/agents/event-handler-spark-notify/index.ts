@@ -1,24 +1,18 @@
-import type { WebSocketBaseEvent, WebSocketEvents } from '@proj-airi/server-sdk'
-import type { ChatProvider } from '@xsai-ext/providers/utils'
+import type { WebSocketEventOf, WebSocketEvents } from '@proj-airi/server-sdk'
+import type { ChatProvider, ChatProviderWithExtraOptions, EmbedProvider, EmbedProviderWithExtraOptions, SpeechProvider, SpeechProviderWithExtraOptions, TranscriptionProvider, TranscriptionProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 import type { Message } from '@xsai/shared-chat'
 
-import type { StreamEvent } from './llm'
+import type { StreamEvent } from '../../../../llm'
 
 import { errorMessageFrom } from '@moeru/std'
 import { tool } from '@xsai/tool'
 import { nanoid } from 'nanoid'
-import { defineStore, storeToRefs } from 'pinia'
-import { ref } from 'vue'
 import { validate } from 'xsschema'
 import { z } from 'zod'
 
-import { useCharacterStore } from './character'
-import { useLLM } from './llm'
-import { useModsServerChannelStore } from './mods/api/channel-server'
-import { useConsciousnessStore } from './modules/consciousness'
-import { useProvidersStore } from './providers'
+import { getEventSourceKey } from '../../../../../utils'
 
-interface SparkNotifyCommandDraft {
+export interface SparkNotifyCommandDraft {
   destinations: string[]
   interrupt?: 'force' | 'soft' | boolean
   priority?: 'critical' | 'high' | 'normal' | 'low'
@@ -28,9 +22,43 @@ interface SparkNotifyCommandDraft {
   contexts?: WebSocketEvents['spark:command']['contexts']
 }
 
-interface SparkNotifyResponse {
+export interface SparkNotifyResponse {
   reaction?: string
   commands?: SparkNotifyCommandDraft[]
+}
+
+export interface SparkNotifyAgentDeps {
+  stream: (
+    model: string,
+    provider: ChatProvider,
+    messages: Message[],
+    options: {
+      tools?: any[]
+      supportsTools?: boolean
+      waitForTools?: boolean
+      onStreamEvent?: (event: StreamEvent) => void | Promise<void>
+    },
+  ) => Promise<void>
+  getActiveProvider: () => string | undefined
+  getActiveModel: () => string | undefined
+  getProviderInstance: <R extends
+  | ChatProvider
+  | ChatProviderWithExtraOptions
+  | EmbedProvider
+  | EmbedProviderWithExtraOptions
+  | SpeechProvider
+  | SpeechProviderWithExtraOptions
+  | TranscriptionProvider
+  | TranscriptionProviderWithExtraOptions,
+  >(name: string,
+  ) => Promise<R>
+  onReactionDelta: (eventId: string, text: string) => void
+  onReactionEnd: (eventId: string, text: string) => void
+  getSystemPrompt: () => string
+  getProcessing: () => boolean
+  setProcessing: (next: boolean) => void
+  getPending: () => Array<WebSocketEventOf<'spark:notify'>>
+  setPending: (next: Array<WebSocketEventOf<'spark:notify'>>) => void
 }
 
 function getSparkNotifyHandlingAgentInstruction(moduleName: string) {
@@ -55,7 +83,7 @@ export const sparkCommandSchema = z.object({
       persona: z.array(z.object({
         strength: z.enum(['very-high', 'high', 'medium', 'low', 'very-low']),
         traits: z.string().describe('Trait name to adjust behavior. For example, "bravery", "cautiousness", "friendliness".'),
-      })).nullable().describe('Personas can be used to adjust the behavior of sub-agents. For example, when using as NPC in games, or player in Minecraft, the persona can help define the character\'s traits and decision-making style.'),
+      }).strict()).nullable().describe('Personas can be used to adjust the behavior of sub-agents. For example, when using as NPC in games, or player in Minecraft, the persona can help define the character\'s traits and decision-making style.'),
       options: z.array(z.object({
         label: z.string().describe('Short and brief label for this option, used for identification, should be within a sentence.'),
         steps: z.array(z.string()).describe('Step-by-step instructions for the sub-agent to follow, useful when providing detailed guidance.'),
@@ -65,40 +93,32 @@ export const sparkCommandSchema = z.object({
         fallback: z.array(z.string()).nullable().describe('Fallback steps if the main steps cannot be completed.'),
         // TODO: consider to remove or enrich how triggers should work later
         triggers: z.array(z.string()).nullable().describe('Conditions or events that would trigger this option.'),
-      })),
-    }).nullable().describe('Guidance for the sub-agent on how to interpret and execute the command with given context, persona settings, and reasoning.'),
-  })).describe('List of commands to issue to sub-agents, you may produce multiple commands in response to multiple sub-agents by specifying their IDs in destination field. Empty array can be used for zero commands.'),
-})
+      }).strict()),
+    }).strict().nullable().describe('Guidance for the sub-agent on how to interpret and execute the command with given context, persona settings, and reasoning.'),
+  }).strict()).describe('List of commands to issue to sub-agents, you may produce multiple commands in response to multiple sub-agents by specifying their IDs in destination field. Empty array can be used for zero commands.'),
+}).strict()
 
 export type SparkCommandSchema = z.infer<typeof sparkCommandSchema>
 
-export const useCharacterOrchestratorStore = defineStore('character-orchestrator', () => {
-  const { stream } = useLLM()
-  const { activeProvider, activeModel } = storeToRefs(useConsciousnessStore())
-  const providersStore = useProvidersStore()
-  const characterStore = useCharacterStore()
-  const { systemPrompt } = storeToRefs(characterStore)
-  const modsServerChannelStore = useModsServerChannelStore()
-
-  const processing = ref(false)
-  const pendingNotifies = ref<Array<WebSocketBaseEvent<'spark:notify', WebSocketEvents['spark:notify']>>>([])
-
-  async function runNotifyAgent(event: WebSocketBaseEvent<'spark:notify', WebSocketEvents['spark:notify']>) {
-    if (!activeProvider.value || !activeModel.value) {
+export function setupAgentSparkNotifyHandler(deps: SparkNotifyAgentDeps) {
+  async function runNotifyAgent(event: WebSocketEventOf<'spark:notify'>) {
+    const activeProvider = deps.getActiveProvider()
+    const activeModel = deps.getActiveModel()
+    if (!activeProvider || !activeModel) {
       console.warn('Spark notify ignored: missing active provider or model')
       return undefined
     }
 
-    const chatProvider = await providersStore.getProviderInstance<ChatProvider>(activeProvider.value)
+    const chatProvider = await deps.getProviderInstance<ChatProvider>(activeProvider)
     const commandDrafts: SparkNotifyCommandDraft[] = []
 
     let noResponse = false
 
     const sparkNoResponseTool = await tool({
       name: 'builtIn_sparkNoResponse',
-      description: `Indicate that no response or action is needed for the current spark:notify event.`,
-      parameters: z.object({}),
-      execute: async (_payload) => {
+      description: 'Indicate that no response or action is needed for the current spark:notify event.',
+      parameters: z.object({}).strict(),
+      execute: async () => {
         noResponse = true
         return 'AIRI System: Acknowledged, no response or action will be processed.'
       },
@@ -106,7 +126,7 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
 
     const sparkCommandTool = await tool({
       name: 'builtIn_sparkCommand',
-      description: `Issue a spark:command to sub-agents. You can call this tool multiple times to issue matrices of commands to different sub-agents as needed.`,
+      description: 'Issue a spark:command to sub-agents. You can call this tool multiple times to issue matrices of commands to different sub-agents as needed.',
       parameters: sparkCommandSchema,
       execute: async (payload) => {
         try {
@@ -153,8 +173,8 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
     const systemMessage: Message = {
       role: 'system',
       content: [
-        systemPrompt.value,
-        getSparkNotifyHandlingAgentInstruction(event.source),
+        deps.getSystemPrompt(),
+        getSparkNotifyHandlingAgentInstruction(getEventSourceKey(event)),
       ].filter(Boolean).join('\n\n'),
     }
 
@@ -168,32 +188,32 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
 
     let fullText = ''
 
-    await stream(activeModel.value, chatProvider, [systemMessage, userMessage], {
+    await deps.stream(activeModel, chatProvider, [systemMessage, userMessage], {
       tools: [
         sparkNoResponseTool,
         sparkCommandTool,
       ],
-      supportsTools: true, // we expect tools to be supported
-      waitForTools: true, // see https://github.com/moeru-ai/airi/issues/907
+      supportsTools: true,
+      waitForTools: true,
       onStreamEvent: async (streamEvent: StreamEvent) => {
         if (streamEvent.type === 'text-delta') {
           if (noResponse)
             return
 
-          characterStore.onSparkNotifyReactionStreamEvent(event.data.id, streamEvent.text)
+          deps.onReactionDelta(event.data.id, streamEvent.text)
 
           fullText += streamEvent.text
         }
         if (streamEvent.type === 'finish') {
           if (noResponse) {
-            characterStore.onSparkNotifyReactionStreamEnd(event.data.id, '')
+            deps.onReactionEnd(event.data.id, '')
             return
           }
 
-          characterStore.onSparkNotifyReactionStreamEnd(event.data.id, fullText)
+          deps.onReactionEnd(event.data.id, fullText)
         }
         if (streamEvent.type === 'error') {
-          characterStore.onSparkNotifyReactionStreamEnd(event.data.id, fullText)
+          deps.onReactionEnd(event.data.id, fullText)
           throw streamEvent.error ?? new Error('Spark notify stream error')
         }
       },
@@ -205,17 +225,17 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
     } satisfies SparkNotifyResponse
   }
 
-  async function handleSparkNotify(event: WebSocketBaseEvent<'spark:notify', WebSocketEvents['spark:notify']>) {
-    if (event.data.urgency !== 'immediate' && pendingNotifies.value.length > 0) {
-      pendingNotifies.value = [...pendingNotifies.value, event]
+  async function handle(event: WebSocketEventOf<'spark:notify'>) {
+    if (event.data.urgency !== 'immediate' && deps.getPending().length > 0) {
+      deps.setPending([...deps.getPending(), event])
       return undefined
     }
-    if (processing.value) {
-      pendingNotifies.value = [...pendingNotifies.value, event]
+    if (deps.getProcessing()) {
+      deps.setPending([...deps.getPending(), event])
       return undefined
     }
 
-    processing.value = true
+    deps.setProcessing(true)
 
     try {
       const response = await runNotifyAgent(event)
@@ -243,51 +263,11 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
       }
     }
     finally {
-      processing.value = false
+      deps.setProcessing(false)
     }
   }
 
-  async function handleSparkEmit(_: WebSocketBaseEvent<'spark:emit', WebSocketEvents['spark:emit']>) {
-    // Currently no-op
-    return undefined
-  }
-
-  function initialize() {
-    modsServerChannelStore.onEvent('spark:notify', async (event) => {
-      try {
-        const result = await handleSparkNotify(event)
-        if (!result?.commands?.length)
-          return
-
-        for (const command of result.commands) {
-          modsServerChannelStore.send({
-            type: 'spark:command',
-            data: command,
-          })
-        }
-      }
-      catch (error) {
-        console.warn('Failed to handle spark:notify event:', error)
-      }
-    })
-
-    modsServerChannelStore.onEvent('spark:emit', async (event) => {
-      try {
-        await handleSparkEmit(event)
-      }
-      catch (error) {
-        console.warn('Failed to handle spark:emit event:', error)
-      }
-    })
-  }
-
   return {
-    processing,
-    pendingNotifies,
-
-    initialize,
-
-    handleSparkNotify,
-    handleSparkEmit,
+    handle,
   }
-})
+}

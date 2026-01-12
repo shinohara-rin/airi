@@ -114,6 +114,10 @@ const routeHeaderMetadataMap = computed(() => {
       subtitle: t('tamagotchi.settings.devtools.title'),
       title: t('tamagotchi.settings.devtools.pages.context-flow.title'),
     },
+    '/devtools/websocket-inspector': {
+      subtitle: t('tamagotchi.settings.devtools.title'),
+      title: 'WebSocket Inspector',
+    },
     '/devtools/performance-visualizer': {
       subtitle: t('settings.title'),
       title: t('settings.pages.system.sections.section.developer.sections.section.performance-visualizer.title'),
@@ -121,6 +125,10 @@ const routeHeaderMetadataMap = computed(() => {
     '/devtools/markdown-stress': {
       subtitle: t('settings.title'),
       title: t('settings.pages.system.sections.section.developer.sections.section.markdown-stress.title'),
+    },
+    '/devtools/screen-capture': {
+      subtitle: t('settings.title'),
+      title: 'Screen Capture',
     },
   }
 
@@ -166,6 +174,7 @@ onMounted(() => updateThemeColor())
       <PageHeader
         :title="routeHeaderMetadata?.title"
         :subtitle="routeHeaderMetadata?.subtitle"
+        :disable-back-button="route.path === '/settings'"
       />
       <RouterView />
     </div>

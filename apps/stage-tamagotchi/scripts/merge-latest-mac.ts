@@ -1,8 +1,9 @@
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
-import { exit } from 'node:process'
+import { cwd, exit } from 'node:process'
 
+import { findWorkspaceDir } from '@pnpm/find-workspace-dir'
 import { cac } from 'cac'
 
 import * as yaml from 'yaml'
@@ -80,7 +81,30 @@ async function readUpdateInfo(filePath: string): Promise<UpdateInfo> {
 
 function collectLatestMacFiles(rootDir: string): string[] {
   const results: string[] = []
+  // eslint-disable-next-line no-console
+  console.debug('merge-latest-mac: scan context', {
+    cwd: cwd(),
+    rootDir,
+  })
+  if (!existsSync(rootDir)) {
+    console.warn('merge-latest-mac: scan directory missing', rootDir)
+    return results
+  }
+  if (!statSync(rootDir).isDirectory()) {
+    return results
+  }
+
   const entries = readdirSync(rootDir, { withFileTypes: true })
+  // eslint-disable-next-line no-console
+  console.debug('merge-latest-mac: scan directory entries', {
+    rootDir,
+    entries: entries.map(entry => ({
+      name: entry.name,
+      isDirectory: entry.isDirectory(),
+      isFile: entry.isFile(),
+    })),
+  })
+
   for (const entry of entries) {
     const fullPath = resolve(rootDir, entry.name)
     if (entry.isDirectory()) {
@@ -91,6 +115,7 @@ function collectLatestMacFiles(rootDir: string): string[] {
       results.push(fullPath)
     }
   }
+
   return results
 }
 
@@ -105,22 +130,27 @@ async function main() {
   const dir = String(args.options.dir || '').trim()
 
   let files: string[] = []
+  const workspaceRoot = await findWorkspaceDir(cwd()) || cwd()
   if (inputs.length > 0) {
     for (const input of inputs) {
       const resolved = resolve(input)
-      if (!existsSync(resolved)) {
+      const fallback = resolve(workspaceRoot, input)
+      const target = existsSync(resolved) ? resolved : fallback
+      if (!existsSync(target)) {
         continue
       }
-      if (statSync(resolved).isDirectory()) {
-        files.push(...collectLatestMacFiles(resolved))
+      if (statSync(target).isDirectory()) {
+        files.push(...collectLatestMacFiles(target))
       }
       else {
-        files.push(resolved)
+        files.push(target)
       }
     }
   }
   else {
-    const scanDir = dir || resolve('bundle')
+    const scanDir = dir
+      ? (existsSync(resolve(dir)) ? resolve(dir) : resolve(workspaceRoot, dir))
+      : resolve('bundle')
     files = collectLatestMacFiles(scanDir)
   }
 

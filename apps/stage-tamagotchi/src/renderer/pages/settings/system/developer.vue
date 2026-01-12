@@ -59,6 +59,18 @@ const menu = computed(() => [
     icon: 'i-solar:chart-bold-duotone',
     to: '/devtools/beat-sync',
   },
+  {
+    title: 'WebSocket Inspector',
+    description: 'Inspect raw WebSocket traffic',
+    icon: 'i-solar:transfer-horizontal-bold-duotone',
+    to: '/devtools/websocket-inspector',
+  },
+  {
+    title: 'Screen Capture',
+    description: 'Capture screen or window as video and/or audio streams',
+    icon: 'i-solar:screen-share-bold-duotone',
+    to: '/devtools/screen-capture',
+  },
 ])
 
 const openDevTools = useElectronEventaInvoke(electronOpenMainDevtools)

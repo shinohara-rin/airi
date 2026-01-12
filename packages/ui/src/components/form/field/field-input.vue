@@ -1,4 +1,8 @@
-<script setup lang="ts">
+<script
+  setup
+  lang="ts"
+  generic="InputType extends 'number' | string, T = InputType extends 'number' ? (number | undefined) : ((string | undefined))"
+>
 import { Input } from '../input'
 
 const props = withDefaults(defineProps<{
@@ -6,14 +10,14 @@ const props = withDefaults(defineProps<{
   description?: string
   placeholder?: string
   required?: boolean
-  type?: string
+  type?: InputType
   inputClass?: string
   singleLine?: boolean
 }>(), {
   singleLine: true,
 })
 
-const modelValue = defineModel<string>({ required: false })
+const modelValue = defineModel<T>({ required: false })
 </script>
 
 <template>
@@ -33,15 +37,22 @@ const modelValue = defineModel<string>({ required: false })
         </div>
       </div>
       <Input
-        v-if="singleLine"
+        v-if="singleLine && props.type === 'number'"
+        v-model.number="modelValue"
+        :type="props.type"
+        :placeholder="props.placeholder"
+        :class="props.inputClass"
+      />
+      <Input
+        v-else-if="singleLine"
         v-model="modelValue"
         :type="props.type"
         :placeholder="props.placeholder"
         :class="props.inputClass"
       />
       <textarea
-        v-else
-        v-model="modelValue"
+        v-else-if="props.type !== 'number'"
+        v-model="modelValue as string | undefined"
         :type="props.type"
         :placeholder="props.placeholder"
         :class="[

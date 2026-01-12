@@ -1,26 +1,26 @@
 /* eslint-disable style/indent-binary-ops */
 /* eslint-disable style/operator-linebreak */
 
-import type { WebSocketBaseEvent, WebSocketEvents } from '@proj-airi/server-sdk'
+import type { WebSocketEventOf } from '@proj-airi/server-sdk'
 import type { Store, StoreDefinition } from 'pinia'
 import type { Mock } from 'vitest'
 import type { UnwrapRef } from 'vue'
 import type z from 'zod'
 
-import type { sparkCommandSchema } from './character-orchestrator'
-import type { StreamEvent } from './llm'
-import type { AiriCard } from './modules'
+import type { StreamEvent } from '../../llm'
+import type { AiriCard } from '../../modules'
 
 import { createTestingPinia } from '@pinia/testing'
+import { tool } from '@xsai/tool'
 import { nanoid } from 'nanoid'
 import { setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useCharacterStore } from './character'
-import { useCharacterOrchestratorStore } from './character-orchestrator'
-import { useLLM } from './llm'
-import { useAiriCardStore, useConsciousnessStore } from './modules'
-import { useProvidersStore } from './providers'
+import { sparkCommandSchema, useCharacterOrchestratorStore } from '.'
+import { useCharacterStore } from '..'
+import { useLLM } from '../../llm'
+import { useAiriCardStore, useConsciousnessStore } from '../../modules'
+import { useProvidersStore } from '../../providers'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
@@ -52,6 +52,54 @@ function mockedStore<TStoreDef extends () => unknown>(
   : ReturnType<TStoreDef> {
   return useStore() as any
 }
+
+function getObjectSchema(schema?: Record<string, any>) {
+  if (!schema)
+    return undefined
+
+  if (schema.type === 'object')
+    return schema
+
+  const candidates = [...(schema.anyOf ?? []), ...(schema.oneOf ?? [])]
+  return candidates.find((candidate: Record<string, any>) => candidate?.type === 'object')
+}
+
+function getArraySchema(schema?: Record<string, any>) {
+  if (!schema)
+    return undefined
+
+  if (schema.type === 'array')
+    return schema
+
+  const candidates = [...(schema.anyOf ?? []), ...(schema.oneOf ?? [])]
+  return candidates.find((candidate: Record<string, any>) => candidate?.type === 'array')
+}
+
+describe('sparkCommandSchema', () => {
+  it('emits strict objects in the json schema', async () => {
+    const sparkTool = await tool({
+      name: 'builtIn_sparkCommand',
+      description: 'test',
+      parameters: sparkCommandSchema,
+      execute: async () => undefined,
+    })
+
+    const schema = sparkTool.function.parameters as Record<string, any>
+    const commandsSchema = getArraySchema(schema.properties?.commands)
+    const commandItemSchema = getObjectSchema(commandsSchema?.items)
+    const guidanceSchema = getObjectSchema(commandItemSchema?.properties?.guidance)
+    const personaSchema = getArraySchema(guidanceSchema?.properties?.persona)
+    const personaItemSchema = getObjectSchema(personaSchema?.items)
+    const optionsSchema = getArraySchema(guidanceSchema?.properties?.options)
+    const optionsItemSchema = getObjectSchema(optionsSchema?.items)
+
+    expect(schema.additionalProperties).toBe(false)
+    expect(commandItemSchema?.additionalProperties).toBe(false)
+    expect(guidanceSchema?.additionalProperties).toBe(false)
+    expect(personaItemSchema?.additionalProperties).toBe(false)
+    expect(optionsItemSchema?.additionalProperties).toBe(false)
+  })
+})
 
 describe('store character-orchestrator', () => {
   beforeEach(() => {
@@ -115,7 +163,7 @@ describe('store character-orchestrator', () => {
     mockedStore(useCharacterStore).onSparkNotifyReactionStreamEnd = mockOnSparkNotifyReactionStreamEnd
 
     const store = useCharacterOrchestratorStore()
-    const event: WebSocketBaseEvent<'spark:notify', WebSocketEvents['spark:notify']> = {
+    const event: WebSocketEventOf<'spark:notify'> = {
       type: 'spark:notify',
       source: 'minecraft',
       data: {
