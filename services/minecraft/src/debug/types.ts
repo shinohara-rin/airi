@@ -70,6 +70,18 @@ export interface ReflexStateEvent {
 }
 
 /**
+ * Conscious system state update
+ */
+export interface ConsciousStateEvent {
+  state: string
+  eventQueueLength: number
+  pendingActionsCount: number
+  inFlightActionsCount: number
+  retryCount: number
+  timestamp: number
+}
+
+/**
  * Traced event from the Cognitive OS EventBus
  */
 export interface TraceEvent {
@@ -143,6 +155,7 @@ export type ServerEvent
     | { type: 'queue', payload: QueueEvent }
     | { type: 'saliency', payload: SaliencyEvent }
     | { type: 'reflex', payload: ReflexStateEvent }
+    | { type: 'conscious', payload: ConsciousStateEvent }
     | { type: 'trace', payload: TraceEvent }
     | { type: 'trace_batch', payload: TraceBatchEvent }
     | { type: 'history', payload: ServerEvent[] }

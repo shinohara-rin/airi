@@ -7,6 +7,7 @@ import type { EventBus, TracedEvent } from '../os'
 import type { PerceptionSignal } from '../perception/types/signals'
 import type { ReflexManager } from '../reflex/reflex-manager'
 import type { BotEvent, MineflayerWithAgents } from '../types'
+import type { ConsciousActor, LLMResponse } from './machines'
 
 import { system, user } from 'neuri/openai'
 
@@ -14,6 +15,7 @@ import { config } from '../../composables/config'
 import { DebugService } from '../../debug'
 import { Blackboard } from './blackboard'
 import { buildConsciousContextView } from './context-view'
+import { createConsciousActor } from './machines'
 import { generateBrainSystemPrompt } from './prompts/brain-prompt'
 
 function toErrorMessage(err: unknown): string {
@@ -89,25 +91,10 @@ interface BrainDeps {
   reflexManager: ReflexManager
 }
 
-interface LLMResponse {
-  thought: string
-  blackboard: {
-    UltimateGoal?: string
-    CurrentTask?: string
-    executionStrategy?: string
-  }
-  actions: ActionInstruction[]
-}
-
-interface QueuedEvent {
-  event: BotEvent
-  resolve: () => void
-  reject: (err: Error) => void
-}
-
 export class Brain {
   private blackboard: Blackboard
   private debugService: DebugService
+  private consciousActor: ConsciousActor | null = null
 
   private bot: MineflayerWithAgents | undefined
 
@@ -120,10 +107,6 @@ export class Brain {
   private feedbackBarrierTimeoutMs = Number.parseInt(process.env.BRAIN_FEEDBACK_BARRIER_TIMEOUT_MS ?? '1000')
   private waitingForFeedbackIds = new Set<string>()
   private feedbackBarrierTimer: NodeJS.Timeout | undefined
-
-  // Event Queue
-  private queue: QueuedEvent[] = []
-  private isProcessing = false
 
   constructor(private readonly deps: BrainDeps) {
     this.blackboard = new Blackboard()
@@ -161,6 +144,38 @@ export class Brain {
     this.bot = bot
     this.blackboard.update({ selfUsername: bot.username })
 
+    // Create conscious state machine actor
+    this.consciousActor = createConsciousActor({
+      initialBlackboard: undefined, // Will use default from machine
+      buildContext: async (event, _blackboard) => {
+        this.updatePerception(bot)
+        return this.contextFromEvent(event)
+      },
+      callLLM: async (_systemPrompt, userMessage) => {
+        // Use existing decision logic
+        const fullSystemPrompt = generateBrainSystemPrompt(this.blackboard, this.deps.taskExecutor.getAvailableActions())
+        const decision = await this.decide(fullSystemPrompt, userMessage)
+        if (!decision) {
+          throw new Error('No decision made')
+        }
+        return decision
+      },
+      executeAction: async (action) => {
+        this.deps.taskExecutor.executeActions([action])
+      },
+      onStateChange: (state) => {
+        this.updateDebugState()
+        this.debugService.emit('conscious:state', { state })
+      },
+    })
+
+    this.consciousActor.start()
+
+    // Subscribe to actor state changes
+    this.consciousActor.subscribe((_snapshot) => {
+      this.updateDebugState()
+    })
+
     const handleSignal = async (signal: PerceptionSignal) => {
       if (signal.type !== 'chat_message' && signal.type !== 'social_presence')
         return
@@ -188,6 +203,9 @@ export class Brain {
       if (id)
         this.inFlightActions.set(id, action)
       this.updatePendingActionsOnBlackboard()
+
+      // Notify state machine
+      this.consciousActor?.send({ type: 'ACTION_STARTED', actionId: id ?? 'unknown' })
     })
 
     this.deps.taskExecutor.on('action:completed', async ({ action, result }) => {
@@ -201,10 +219,12 @@ export class Brain {
       this.updatePendingActionsOnBlackboard()
       this.blackboard.addActionHistoryLine(this.formatActionHistoryLine(action, 'success', result))
 
+      // Notify state machine
+      this.consciousActor?.send({ type: 'ACTION_COMPLETED', actionId: id ?? 'unknown', result })
+
       if (this.waitingForFeedbackIds.size === 0 && this.feedbackBarrierTimer) {
         clearTimeout(this.feedbackBarrierTimer)
         this.feedbackBarrierTimer = undefined
-        void this.processQueue(bot)
       }
 
       if (!action.require_feedback)
@@ -233,10 +253,12 @@ export class Brain {
       this.updatePendingActionsOnBlackboard()
       this.blackboard.addActionHistoryLine(this.formatActionHistoryLine(action, 'failure', undefined, error))
 
+      // Notify state machine
+      this.consciousActor?.send({ type: 'ACTION_FAILED', actionId: id ?? 'unknown', error })
+
       if (this.waitingForFeedbackIds.size === 0 && this.feedbackBarrierTimer) {
         clearTimeout(this.feedbackBarrierTimer)
         this.feedbackBarrierTimer = undefined
-        void this.processQueue(bot)
       }
 
       await this.enqueueEvent(bot, {
@@ -256,77 +278,53 @@ export class Brain {
   }
 
   public destroy(): void {
+    if (this.consciousActor) {
+      this.consciousActor.stop()
+      this.consciousActor = null
+    }
   }
 
-  // --- Event Queue Logic ---
+  // --- Event Queue Logic (now via State Machine) ---
 
   private async enqueueEvent(bot: MineflayerWithAgents, event: BotEvent): Promise<void> {
     this.log('DEBUG', `Brain: Enqueueing event type=${event.type}`)
-    return new Promise((resolve, reject) => {
-      this.queue.push({ event, resolve, reject })
-      this.log('DEBUG', `Brain: Queue length now: ${this.queue.length}`)
-      this.updateDebugState()
 
-      if (event.type === 'feedback' && this.feedbackDebounceMs > 0) {
-        if (this.feedbackDebounceTimer)
-          clearTimeout(this.feedbackDebounceTimer)
-        this.feedbackDebounceTimer = setTimeout(() => {
-          this.feedbackDebounceTimer = undefined
-          void this.processQueue(bot)
-        }, this.feedbackDebounceMs)
-        return
-      }
+    if (!this.consciousActor) {
+      this.log('WARN', 'Brain: No conscious actor, skipping event')
+      return
+    }
 
-      void this.processQueue(bot)
-    })
+    // Handle feedback debouncing
+    if (event.type === 'feedback' && this.feedbackDebounceMs > 0) {
+      if (this.feedbackDebounceTimer)
+        clearTimeout(this.feedbackDebounceTimer)
+      this.feedbackDebounceTimer = setTimeout(() => {
+        this.feedbackDebounceTimer = undefined
+        this.consciousActor?.send({ type: 'ENQUEUE_EVENT', event })
+      }, this.feedbackDebounceMs)
+      return
+    }
+
+    // Send event to state machine
+    this.consciousActor.send({ type: 'ENQUEUE_EVENT', event })
+    this.updateDebugState()
+
+    // Process LLM decision if event triggers it
+    await this.processEventWithMachine(bot, event)
   }
 
-  private async processQueue(bot: MineflayerWithAgents): Promise<void> {
-    if (this.isProcessing) {
-      this.log('DEBUG', 'Brain: Already processing, skipping')
+  private async processEventWithMachine(bot: MineflayerWithAgents, event: BotEvent): Promise<void> {
+    if (!this.consciousActor)
       return
-    }
-    if (this.queue.length === 0) {
-      this.log('DEBUG', 'Brain: Queue empty')
-      return
-    }
 
-    this.log('DEBUG', `Brain: Processing queue item, queue length: ${this.queue.length}`)
-    this.isProcessing = true
-    const item = this.queue.shift()!
-    this.log('DEBUG', `Brain: Processing event type=${item.event.type}`)
-    this.updateDebugState(item.event)
+    const snapshot = this.consciousActor.getSnapshot()
 
-    if (item.event.type === 'feedback' && this.waitingForFeedbackIds.size > 0) {
-      // Defer feedback-triggered replans until the current "turn" feedback barrier is released.
-      // We keep collecting feedback events into the queue, but we avoid calling the LLM on partial results.
-      this.queue.unshift(item)
-      this.isProcessing = false
-      this.updateDebugState()
-      return
-    }
-
-    // Coalesce consecutive feedback events into a single LLM turn.
-    // This prevents the LLM from being spammed with partial results while still supporting streaming replans.
-    const coalescedEvent = item.event.type === 'feedback'
-      ? this.coalesceFeedbackEvents(item.event)
-      : item.event
-
-    try {
-      await this.processEvent(bot, coalescedEvent)
-      item.resolve()
-    }
-    catch (err) {
-      this.log('ERROR', 'Brain: Error processing event', { error: err })
-      item.reject(err as Error)
-    }
-    finally {
-      this.isProcessing = false
-      this.updateDebugState()
-      // Context switch: Check queue again
-      if (this.queue.length > 0) {
-        setImmediate(() => this.processQueue(bot))
-      }
+    // If there are queued events, the machine should process them
+    // We manually trigger processing since the machine's automatic transitions
+    // might not work perfectly for async operations
+    if (snapshot.context.eventQueue.length > 0 && snapshot.value === 'idle') {
+      // Process the event through OODA loop
+      await this.processEvent(bot, event)
     }
   }
 
@@ -359,29 +357,6 @@ export class Brain {
       }
       default:
         return ''
-    }
-  }
-
-  private coalesceFeedbackEvents(first: BotEvent): BotEvent {
-    const feedbacks: any[] = [first.payload]
-
-    while (this.queue.length > 0 && this.queue[0]?.event.type === 'feedback') {
-      const next = this.queue.shift()!
-      feedbacks.push(next.event.payload)
-      next.resolve()
-    }
-
-    if (feedbacks.length === 1)
-      return first
-
-    return {
-      type: 'feedback',
-      payload: {
-        status: 'batch',
-        feedbacks,
-      },
-      source: first.source,
-      timestamp: first.timestamp,
     }
   }
 
@@ -446,9 +421,9 @@ export class Brain {
 
     // Update Blackboard
     this.blackboard.update({
-      ultimateGoal: decision.blackboard.UltimateGoal || this.blackboard.ultimate_goal,
-      currentTask: decision.blackboard.CurrentTask || this.blackboard.current_task,
-      strategy: decision.blackboard.executionStrategy || this.blackboard.strategy,
+      ultimateGoal: decision.blackboard?.UltimateGoal || this.blackboard.ultimate_goal,
+      currentTask: decision.blackboard?.CurrentTask || this.blackboard.current_task,
+      strategy: decision.blackboard?.executionStrategy || this.blackboard.strategy,
     })
 
     // Sync Blackboard to Debug
@@ -469,7 +444,6 @@ export class Brain {
           this.feedbackBarrierTimer = undefined
           this.waitingForFeedbackIds.clear()
           this.updatePendingActionsOnBlackboard()
-          void this.processQueue(bot)
         }, this.feedbackBarrierTimeoutMs)
 
         this.updatePendingActionsOnBlackboard()
@@ -481,7 +455,7 @@ export class Brain {
           this.blackboard.addChatMessage({
             sender: config.bot.username || '[Me]',
             content: action.message,
-            timestamp: Date.now(), // FIXME: should be the time the action was issued
+            timestamp: Date.now(),
           })
         }
       }
@@ -586,9 +560,20 @@ export class Brain {
   }
 
   private updateDebugState(processingEvent?: BotEvent) {
-    this.debugService.updateQueue(
-      this.queue.map(q => q.event),
-      processingEvent,
-    )
+    // Get state from machine if available
+    if (this.consciousActor) {
+      const snapshot = this.consciousActor.getSnapshot()
+      this.debugService.updateQueue(
+        snapshot.context.eventQueue,
+        processingEvent ?? snapshot.context.currentEvent ?? undefined,
+      )
+      this.debugService.emit('conscious:state', {
+        state: snapshot.value,
+        eventQueueLength: snapshot.context.eventQueue.length,
+        pendingActionsCount: snapshot.context.pendingActions.size,
+        inFlightActionsCount: snapshot.context.inFlightActions.size,
+        retryCount: snapshot.context.retryCount,
+      })
+    }
   }
 }

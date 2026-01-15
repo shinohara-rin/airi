@@ -1,4 +1,4 @@
-import type { BlackboardEvent, ClientCommand, LLMTraceEvent, LogEvent, QueueEvent, ReflexStateEvent, SaliencyEvent, ServerEvent, TraceEvent } from './types'
+import type { BlackboardEvent, ClientCommand, ConsciousStateEvent, LLMTraceEvent, LogEvent, QueueEvent, ReflexStateEvent, SaliencyEvent, ServerEvent, TraceEvent } from './types'
 
 import { DebugServer } from './server'
 
@@ -162,6 +162,20 @@ export class DebugService {
     this.server.broadcast(event)
   }
 
+  /**
+   * Emit a conscious state update
+   */
+  public emitConsciousState(state: Omit<ConsciousStateEvent, 'timestamp'>): void {
+    const event: ServerEvent = {
+      type: 'conscious',
+      payload: {
+        ...state,
+        timestamp: Date.now(),
+      },
+    }
+    this.server.broadcast(event)
+  }
+
   // ============================================================
   // Generic emit for custom events
   // ============================================================
@@ -199,6 +213,10 @@ export class DebugService {
       }
       case 'reflex':
         this.emitReflexState(payload as Omit<ReflexStateEvent, 'timestamp'>)
+        break
+      case 'conscious':
+      case 'conscious:state':
+        this.emitConsciousState(payload as Omit<ConsciousStateEvent, 'timestamp'>)
         break
       case 'debug:tools_list':
         this.server.broadcast({

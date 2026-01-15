@@ -29,8 +29,12 @@
         <span id="stat-queue" class="stat-value">0</span>
       </div>
       <div class="stat">
-        <span class="stat-label">Reflex Mode</span>
+        <span class="stat-label">Reflex</span>
         <span id="stat-reflex-mode" class="stat-value">unknown</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Conscious</span>
+        <span id="stat-conscious-state" class="stat-value">idle</span>
       </div>
       <div class="stat">
         <span class="stat-label">LLM Calls</span>
@@ -101,6 +105,35 @@
             <div class="kv-row">
               <span class="kv-key">Last Speaker:</span>
               <span class="kv-value" id="reflex-social-speaker">None</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Conscious State -->
+        <section id="conscious-section" class="panel">
+          <div class="panel-header">
+            <h2>Conscious State</h2>
+            <div class="panel-controls">
+              <span class="panel-badge" id="conscious-state">idle</span>
+              <button class="icon-btn maximize-btn" title="Toggle maximize">⤢</button>
+            </div>
+          </div>
+          <div class="panel-content">
+            <div class="kv-row">
+              <span class="kv-key">Event Queue:</span>
+              <span class="kv-value" id="conscious-queue-length">0</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Pending Actions:</span>
+              <span class="kv-value" id="conscious-pending-actions">0</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">In-Flight Actions:</span>
+              <span class="kv-value" id="conscious-inflight-actions">0</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Retry Count:</span>
+              <span class="kv-value" id="conscious-retry-count">0</span>
             </div>
           </div>
         </section>

@@ -357,6 +357,87 @@ class ReflexPanel {
 }
 
 // =============================================================================
+// Conscious Panel
+// =============================================================================
+
+class ConsciousPanel {
+  constructor(client) {
+    this.client = client
+    this.state = null
+    this.elements = {
+      state: document.getElementById('conscious-state'),
+      statState: document.getElementById('stat-conscious-state'),
+      queueLength: document.getElementById('conscious-queue-length'),
+      pendingActions: document.getElementById('conscious-pending-actions'),
+      inflightActions: document.getElementById('conscious-inflight-actions'),
+      retryCount: document.getElementById('conscious-retry-count'),
+    }
+  }
+
+  init() {
+    this.client.on('conscious', data => this.update(data))
+    this.client.on('connected', () => this.reset())
+    this.render()
+  }
+
+  update(data) {
+    this.state = data
+    this.render()
+  }
+
+  reset() {
+    this.state = null
+    this.render()
+  }
+
+  render() {
+    if (!this.state) {
+      if (this.elements.state) {
+        this.elements.state.textContent = 'idle'
+        this.elements.state.className = 'panel-badge'
+      }
+      if (this.elements.statState)
+        this.elements.statState.textContent = 'idle'
+      if (this.elements.queueLength)
+        this.elements.queueLength.textContent = '0'
+      if (this.elements.pendingActions)
+        this.elements.pendingActions.textContent = '0'
+      if (this.elements.inflightActions)
+        this.elements.inflightActions.textContent = '0'
+      if (this.elements.retryCount)
+        this.elements.retryCount.textContent = '0'
+      return
+    }
+
+    const { state, eventQueueLength, pendingActionsCount, inFlightActionsCount, retryCount } = this.state
+
+    // State badge
+    if (this.elements.state) {
+      this.elements.state.textContent = state || 'unknown'
+      this.elements.state.className = `panel-badge ${state === 'deciding' ? 'badge-warning' : (state === 'executing' ? 'badge-success' : '')}`
+    }
+    if (this.elements.statState)
+      this.elements.statState.textContent = state || 'unknown'
+
+    // Queue length
+    if (this.elements.queueLength)
+      this.elements.queueLength.textContent = eventQueueLength ?? 0
+
+    // Pending actions
+    if (this.elements.pendingActions)
+      this.elements.pendingActions.textContent = pendingActionsCount ?? 0
+
+    // In-flight actions
+    if (this.elements.inflightActions)
+      this.elements.inflightActions.textContent = inFlightActionsCount ?? 0
+
+    // Retry count
+    if (this.elements.retryCount)
+      this.elements.retryCount.textContent = retryCount ?? 0
+  }
+}
+
+// =============================================================================
 // Blackboard Panel
 // =============================================================================
 
@@ -1252,6 +1333,7 @@ class DebugApp {
     this.layoutManager = new LayoutManager()
     this.queuePanel = new QueuePanel(this.client)
     this.reflexPanel = new ReflexPanel(this.client)
+    this.consciousPanel = new ConsciousPanel(this.client)
     this.blackboardPanel = new BlackboardPanel(this.client)
     this.logsPanel = new LogsPanel(this.client)
     this.llmPanel = new LLMPanel(this.client)
@@ -1262,6 +1344,7 @@ class DebugApp {
     this.panels = {
       queue: this.queuePanel,
       reflex: this.reflexPanel,
+      conscious: this.consciousPanel,
       blackboard: this.blackboardPanel,
       logs: this.logsPanel,
       llm: this.llmPanel,
