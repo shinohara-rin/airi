@@ -38,11 +38,13 @@
     "valibot": "^1.2.0",
     "vec3": "^0.1.10",
     "ws": "catalog:",
+    "xstate": "catalog:",
     "yaml": "catalog:",
     "zod": "^4.2.1",
     "zod-to-json-schema": "^3.25.1"
   },
   "devDependencies": {
-    "@types/ws": "catalog:"
+    "@types/ws": "catalog:",
+    "@xstate/inspect": "catalog:"
   }
 }

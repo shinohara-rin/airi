@@ -3,26 +3,26 @@ import type { Logg } from '@guiiai/logg'
 import type { EventBus } from '../os'
 import type { MineflayerWithAgents } from '../types'
 import type { PerceptionFrame } from './frame'
+import type { PerceptionActor } from './machines'
 import type { RawPerceptionEvent } from './types/raw-events'
 import type { PerceptionSignal } from './types/signals'
 import type { PerceptionStage } from './types/stage'
 
 import { DebugService } from '../../debug'
 import { createPerceptionFrameFromRawEvent } from './frame'
+import { createPerceptionActor } from './machines'
 import { MineflayerPerceptionCollector } from './mineflayer-perception-collector'
 import { PerceptionAPI } from './perception-api'
-import { SaliencyDetector } from './saliency-detector'
 
 export class PerceptionPipeline {
-  private readonly detector: SaliencyDetector
   private readonly perception: PerceptionAPI
+  private perceptionActor: PerceptionActor | null = null
   private collector: MineflayerPerceptionCollector | null = null
   private initialized = false
 
   private readonly stages: PerceptionStage[]
 
   private currentFrame: PerceptionFrame | null = null
-
   private saliencyEmitTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(
@@ -32,18 +32,6 @@ export class PerceptionPipeline {
     },
   ) {
     this.perception = new PerceptionAPI({ logger: this.deps.logger })
-
-    this.detector = new SaliencyDetector({
-      logger: this.deps.logger,
-      onAttention: (signal) => {
-        // This is only called synchronously while we're handling a specific frame.
-        // Attach derived signals to that frame; router stage will emit them.
-        this.currentFrame?.signals.push({
-          type: 'perception_signal',
-          payload: signal,
-        })
-      },
-    })
 
     this.stages = [
       {
@@ -80,7 +68,6 @@ export class PerceptionPipeline {
           this.currentFrame = frame
           try {
             const raw = frame.raw as RawPerceptionEvent
-            this.detector.ingest(raw)
 
             // Also emit to EventBus for rule processing
             this.emitRawToEventBus(raw)
@@ -119,12 +106,28 @@ export class PerceptionPipeline {
 
     this.deps.logger.withFields({ maxDistance: 32 }).log('PerceptionPipeline: init')
 
-    this.detector.start()
+    // Create and start perception machine actor
+    this.perceptionActor = createPerceptionActor({
+      slotMs: 20,
+      maxDistance: 32,
+      onSignal: (signal) => {
+        // Attach signals to current frame for router stage emission
+        this.currentFrame?.signals.push({
+          type: 'perception_signal',
+          payload: signal,
+        })
+      },
+    })
+    this.perceptionActor.start()
+    this.perceptionActor.send({ type: 'START' })
 
+    // Emit saliency snapshot for debug dashboard
     this.saliencyEmitTimer = setInterval(() => {
-      if (!this.initialized)
+      if (!this.initialized || !this.perceptionActor)
         return
-      DebugService.getInstance().emit('saliency', this.detector.getDebugSnapshot())
+
+      const snapshot = this.perceptionActor.getSnapshot()
+      DebugService.getInstance().emit('saliency', this.getDebugSnapshot(snapshot.context))
     }, 100)
 
     this.collector = new MineflayerPerceptionCollector({
@@ -147,7 +150,13 @@ export class PerceptionPipeline {
       this.saliencyEmitTimer = null
     }
 
-    this.detector.stop()
+    // Stop perception machine
+    if (this.perceptionActor) {
+      this.perceptionActor.send({ type: 'STOP' })
+      this.perceptionActor.stop()
+      this.perceptionActor = null
+    }
+
     this.initialized = false
   }
 
@@ -156,6 +165,53 @@ export class PerceptionPipeline {
    */
   public getPerceptionAPI(): PerceptionAPI {
     return this.perception
+  }
+
+  /**
+   * Get debug snapshot from machine context for visualization
+   */
+  private getDebugSnapshot(context: any) {
+    const counters = []
+    for (const [key, counter] of context.counters.entries()) {
+      counters.push({
+        key,
+        total: counter.total,
+        window: this.exportWindow(counter),
+        triggers: this.exportTriggers(counter),
+        lastFireSlot: counter.lastFireSlot,
+        lastFireTotal: counter.lastFireTotal,
+      })
+    }
+    return {
+      slot: context.currentSlot,
+      counters,
+    }
+  }
+
+  /**
+   * Export window data in chronological order (oldest -> newest)
+   */
+  private exportWindow(counter: any): number[] {
+    const windowSize = counter.counts.length
+    const out = new Array<number>(windowSize)
+    for (let i = 0; i < windowSize; i++) {
+      const idx = (counter.head + 1 + i) % windowSize
+      out[i] = counter.counts[idx] ?? 0
+    }
+    return out
+  }
+
+  /**
+   * Export trigger markers in chronological order (oldest -> newest)
+   */
+  private exportTriggers(counter: any): number[] {
+    const windowSize = counter.triggers.length
+    const out = new Array<number>(windowSize)
+    for (let i = 0; i < windowSize; i++) {
+      const idx = (counter.head + 1 + i) % windowSize
+      out[i] = counter.triggers[idx] ?? 0
+    }
+    return out
   }
 
   public ingest(frame: PerceptionFrame): void {
