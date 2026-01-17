@@ -2,9 +2,12 @@ import type { Logg } from '@guiiai/logg'
 import type { Neuri } from 'neuri'
 
 import type { EventBus, RuleEngine } from './os'
+import type { PerceptionAPI } from './perception/perception-api'
+import type { ReflexExecutor } from './reflex/reflex-executor'
+import type { ReflexSkills } from './reflex/reflex-skills'
 
 import { useLogg } from '@guiiai/logg'
-import { asClass, asFunction, createContainer, InjectionMode } from 'awilix'
+import { asClass, asFunction, asValue, createContainer, InjectionMode } from 'awilix'
 
 import { ActionAgentImpl } from '../agents/action'
 import { ChatAgentImpl } from '../agents/chat'
@@ -13,7 +16,9 @@ import { TaskExecutor } from './action/task-executor'
 import { Brain } from './conscious/brain'
 import { createEventBus, createRuleEngine } from './os'
 import { PerceptionPipeline } from './perception/pipeline'
+import { ReflexExecutor as ReflexExecutorImpl } from './reflex/reflex-executor'
 import { ReflexManager } from './reflex/reflex-manager'
+import { reflexSkills } from './reflex/reflex-skills'
 
 export interface ContainerServices {
   logger: Logg
@@ -24,9 +29,12 @@ export interface ContainerServices {
   chatAgent: ChatAgentImpl
   neuri: Neuri
   perceptionPipeline: PerceptionPipeline
+  perception: PerceptionAPI
   taskExecutor: TaskExecutor
   brain: Brain
   reflexManager: ReflexManager
+  executor: ReflexExecutor
+  skills: ReflexSkills
 }
 
 export function createAgentContainer(options: {
@@ -102,26 +110,19 @@ export function createAgentContainer(options: {
 
     perceptionPipeline: asClass(PerceptionPipeline).singleton(),
 
+    // Expose PerceptionAPI directly for injection
+    perception: asFunction(({ perceptionPipeline }) => perceptionPipeline.getPerceptionAPI()),
+
     taskExecutor: asClass(TaskExecutor).singleton(),
 
-    brain: asClass(Brain)
-      .singleton()
-      .inject((c) => {
-        return {
-          eventBus: c.resolve('eventBus'),
-          reflexManager: c.resolve('reflexManager'),
-        }
-      }),
+    brain: asClass(Brain).singleton(),
+
+    // Reflex Services
+    executor: asClass(ReflexExecutorImpl).singleton(),
+    skills: asValue(reflexSkills),
 
     // Reflex Manager (Reactive Layer)
-    reflexManager: asFunction(({ eventBus, perceptionPipeline, taskExecutor, logger }) =>
-      new ReflexManager({
-        eventBus,
-        perception: perceptionPipeline.getPerceptionAPI(),
-        taskExecutor,
-        logger,
-      }),
-    ).singleton(),
+    reflexManager: asClass(ReflexManager).singleton(),
   })
 
   return container

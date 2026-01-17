@@ -25,18 +25,23 @@ export const lookAtBehavior: ReflexBehavior = {
     return 50
   },
 
-  run: async ({ bot, context }) => {
-    const { lastSignalSourceId } = context.getSnapshot().attention
+  run: (ctx, perception) => {
+    const { lastSignalSourceId } = ctx.attention
 
     if (!lastSignalSourceId)
-      return
+      return null
 
     // Find the entity
-    const target = bot.bot.entities[Number(lastSignalSourceId)]
+    const target = perception.getEntity(lastSignalSourceId)
     if (!target)
-      return
+      return null
 
-    // Look at the entity smoothly
-    await bot.bot.lookAt(target.position.offset(0, target.height * 0.85, 0), true)
+    return {
+      intent: {
+        type: 'look_at',
+        // Approximate eye height since EntityState doesn't expose height yet
+        target: target.state.position.offset(0, 1.6, 0),
+      },
+    }
   },
 }

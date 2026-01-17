@@ -1,4 +1,4 @@
-import type { BehaviorDefinition, ReflexContextSnapshot, ReflexMachineContext } from './types'
+import type { ReflexContextSnapshot, ReflexMachineContext } from './types'
 
 /**
  * Update the reflex context state
@@ -156,55 +156,3 @@ export function setFollowTarget(
   }
 }
 
-/**
- * Select best behavior for current mode and context
- * Returns behavior ID and score, or null if none match
- */
-export function selectBehavior(
-  context: ReflexMachineContext,
-  mode: string,
-): { behaviorId: string, score: number } | null {
-  const ctx = context.contextState
-  const now = ctx.now
-
-  let best: { behavior: BehaviorDefinition, score: number } | null = null
-
-  for (const behavior of context.behaviors) {
-    // Check if behavior is valid for this mode
-    if (!behavior.modes.includes(mode as any)) {
-      continue
-    }
-
-    // Check behavior guard
-    if (!behavior.when(ctx)) {
-      continue
-    }
-
-    // Calculate score
-    const score = behavior.score(ctx)
-    if (score <= 0) {
-      continue
-    }
-
-    // Check cooldown
-    const history = context.runHistory.get(behavior.id)
-    const cooldownMs = behavior.cooldownMs ?? 0
-    if (history && cooldownMs > 0 && now - history.lastRunAt < cooldownMs) {
-      continue
-    }
-
-    // Track best
-    if (!best || score > best.score) {
-      best = { behavior, score }
-    }
-  }
-
-  if (!best) {
-    return null
-  }
-
-  return {
-    behaviorId: best.behavior.id,
-    score: best.score,
-  }
-}
