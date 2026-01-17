@@ -1,6 +1,7 @@
 import type { ActionInstruction } from '../../action/types'
 import type { BotEvent } from '../../types'
-import type { BlackboardState } from '../blackboard'
+import type { BlackboardState } from '../types'
+import { updateBlackboard as opUpdateBlackboard } from '../blackboard-ops'
 import type { ConsciousMachineContext, LLMResponse } from './types'
 
 /**
@@ -64,10 +65,7 @@ export function updateBlackboard(
 
   return {
     ...context,
-    blackboard: {
-      ...context.blackboard,
-      ...updates,
-    },
+    blackboard: opUpdateBlackboard(context.blackboard, updates),
     lastResponse: response,
   }
 }

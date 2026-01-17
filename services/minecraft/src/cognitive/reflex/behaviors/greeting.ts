@@ -22,19 +22,21 @@ export const greetingBehavior: ReflexBehavior = {
 
     return 10
   },
-  run: ({ bot, context }) => {
-    const snap = context.getSnapshot()
-    const speaker = snap.social.lastSpeaker
+  run: (ctx) => {
+    const speaker = ctx.social.lastSpeaker
     if (!speaker)
-      return
+      return null
 
-    bot.bot.chat('Hi there! (Reflex)')
-
-    context.updateSocial({
-      lastGreetingAtBySpeaker: {
-        ...snap.social.lastGreetingAtBySpeaker,
-        [speaker]: snap.now,
+    return {
+      intent: { type: 'chat', message: 'Hi there! (Reflex)' },
+      stateUpdates: {
+        social: {
+          lastGreetingAtBySpeaker: {
+            ...ctx.social.lastGreetingAtBySpeaker,
+            [speaker]: ctx.now,
+          },
+        },
       },
-    })
+    }
   },
 }

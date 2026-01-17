@@ -1,50 +1,15 @@
-export interface contextViewState {
-  selfSummary: string
-  environmentSummary: string
-}
+import type { ActionHistoryLine, BlackboardState, ChatMessage, ContextViewState } from './types'
+import * as Ops from './blackboard-ops'
 
-export interface ChatMessage {
-  sender: string
-  content: string
-  timestamp: number
-}
-
-export interface ActionHistoryLine {
-  line: string
-  timestamp: number
-}
-
-export interface BlackboardState {
-  ultimateGoal: string
-  currentTask: string
-  strategy: string
-  contextView: contextViewState
-  chatHistory: ChatMessage[]
-  recentActionHistory: ActionHistoryLine[]
-  pendingActions: string[]
-  selfUsername: string
-}
+export * from './types'
+// Alias for backward compatibility
+export type contextViewState = ContextViewState
 
 export class Blackboard {
   private _state: BlackboardState
-  private static readonly MAX_CHAT_HISTORY = 8
-  private static readonly MAX_ACTION_HISTORY = 12
-  private static readonly MAX_PENDING_ACTIONS = 12
 
   constructor() {
-    this._state = {
-      ultimateGoal: 'nothing',
-      currentTask: 'I am waiting for something to happen.',
-      strategy: 'idle',
-      contextView: {
-        selfSummary: 'Unknown',
-        environmentSummary: 'Unknown',
-      },
-      chatHistory: [],
-      recentActionHistory: [],
-      pendingActions: [],
-      selfUsername: 'Bot',
-    }
+    this._state = Ops.createBlackboard()
   }
 
   // Getters
@@ -58,32 +23,25 @@ export class Blackboard {
   public get pendingActions(): string[] { return this._state.pendingActions }
   public get selfUsername(): string { return this._state.selfUsername }
 
-  // Setters (Partial updates allowed)
+  // Setters (using pure ops internally)
   public update(updates: Partial<BlackboardState>): void {
-    this._state = { ...this._state, ...updates }
+    this._state = Ops.updateBlackboard(this._state, updates)
   }
 
-  public updateContextView(updates: Partial<contextViewState>): void {
-    this._state.contextView = { ...this._state.contextView, ...updates }
+  public updateContextView(updates: Partial<ContextViewState>): void {
+    this._state = Ops.updateContextView(this._state, updates)
   }
 
   public addChatMessage(message: ChatMessage): void {
-    const newHistory = [...this._state.chatHistory, message]
-    if (newHistory.length > Blackboard.MAX_CHAT_HISTORY) {
-      newHistory.shift() // Remove oldest
-    }
-    this._state = { ...this._state, chatHistory: newHistory }
+    this._state = Ops.addChatMessage(this._state, message)
   }
 
   public addActionHistoryLine(line: string, timestamp: number = Date.now()): void {
-    const next = [...this._state.recentActionHistory, { line, timestamp }]
-    const trimmed = next.length > Blackboard.MAX_ACTION_HISTORY ? next.slice(-Blackboard.MAX_ACTION_HISTORY) : next
-    this._state = { ...this._state, recentActionHistory: trimmed }
+    this._state = Ops.addActionHistoryLine(this._state, line, timestamp)
   }
 
   public setPendingActions(lines: string[]): void {
-    const trimmed = lines.length > Blackboard.MAX_PENDING_ACTIONS ? lines.slice(0, Blackboard.MAX_PENDING_ACTIONS) : lines
-    this._state = { ...this._state, pendingActions: trimmed }
+    this._state = Ops.setPendingActions(this._state, lines)
   }
 
   public getSnapshot(): BlackboardState {
@@ -91,7 +49,7 @@ export class Blackboard {
       ...this._state,
       contextView: { ...this._state.contextView },
       chatHistory: [...this._state.chatHistory],
-      recentActionHistory: this._state.recentActionHistory.map(l => ({ ...l })),
+      recentActionHistory: [...this._state.recentActionHistory],
       pendingActions: [...this._state.pendingActions],
     }
   }

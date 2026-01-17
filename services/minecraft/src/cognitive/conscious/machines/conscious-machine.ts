@@ -2,6 +2,7 @@ import type { ConsciousEvent, ConsciousMachineContext, ConsciousMachineInput } f
 
 import { assign, createActor, fromPromise, setup } from 'xstate'
 
+import { createBlackboard } from '../blackboard-ops'
 import {
   addPendingActions,
   clearAllActions,
@@ -26,19 +27,7 @@ import {
 function createInitialContext(input: ConsciousMachineInput): ConsciousMachineContext {
   return {
     eventQueue: [],
-    blackboard: input.initialBlackboard ?? {
-      ultimateGoal: 'nothing',
-      currentTask: 'I am waiting for something to happen.',
-      strategy: 'idle',
-      contextView: {
-        selfSummary: 'Unknown',
-        environmentSummary: 'Unknown',
-      },
-      chatHistory: [],
-      recentActionHistory: [],
-      pendingActions: [],
-      selfUsername: 'Bot',
-    },
+    blackboard: input.initialBlackboard ?? createBlackboard(),
     pendingActions: new Map(),
     inFlightActions: new Set(),
     retryCount: 0,
