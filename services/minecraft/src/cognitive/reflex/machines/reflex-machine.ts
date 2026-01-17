@@ -1,10 +1,8 @@
-import type { MineflayerWithAgents } from '../../types'
 import type { ReflexEvent, ReflexMachineContext, ReflexMachineInput, ReflexMode } from './types'
 
 import { Vec3 } from 'vec3'
-import { assign, createActor, fromCallback, setup } from 'xstate'
+import { assign, createActor, setup } from 'xstate'
 
-import { followPlayer } from '../../../skills/movement'
 import {
   clearActiveBehavior,
   decrementActionsCount,
@@ -141,43 +139,6 @@ export function createReflexMachine(input: ReflexMachineInput) {
       incrementActions: assign(({ context }) => incrementActionsCount(context)),
       decrementActions: assign(({ context }) => decrementActionsCount(context)),
 
-      enterSocialMode: ({ context }, params: { bot: MineflayerWithAgents | null }) => {
-        const bot = params.bot
-        if (!bot)
-          return
-
-        const snap = context.contextState
-
-        // Pick follow target
-        const preferredName = snap.social.lastSpeaker
-        const nearbyPlayers = snap.environment.nearbyPlayers
-
-        let chosenTarget: string | null = null
-
-        if (preferredName) {
-          const found = nearbyPlayers.find(p => p.name === preferredName)
-          if (found) {
-            chosenTarget = preferredName
-          }
-        }
-
-        if (!chosenTarget && nearbyPlayers.length > 0) {
-          chosenTarget = nearbyPlayers[0].name
-        }
-
-        if (chosenTarget) {
-          // Start following
-          void followPlayer(bot, chosenTarget)
-        }
-      },
-
-      exitSocialMode: (_, params: { bot: MineflayerWithAgents | null }) => {
-        const bot = params.bot
-        if (bot) {
-          bot.interrupt?.('reflex:social_exit')
-        }
-      },
-
       notifyModeChange: (_, params: { mode: ReflexMode }) => {
         if (input.onModeChange) {
           input.onModeChange(params.mode)
@@ -191,35 +152,6 @@ export function createReflexMachine(input: ReflexMachineInput) {
       },
 
       clearBehavior: assign(({ context }) => clearActiveBehavior(context)),
-    },
-    actors: {
-      runBehavior: fromCallback(({ input, sendBack }: { input: any, sendBack: any }) => {
-        const { context, behaviorId, bot, perception, reflexContext } = input
-
-        const behavior = context.behaviors.find((b: any) => b.id === behaviorId)
-        if (!behavior) {
-          sendBack({ type: 'BEHAVIOR_DONE' })
-          return
-        }
-
-        const api = { bot, context: reflexContext, perception }
-
-        try {
-          const maybePromise = behavior.run(api)
-          if (maybePromise && typeof (maybePromise as any).then === 'function') {
-            void (maybePromise as Promise<void>).finally(() => {
-              sendBack({ type: 'BEHAVIOR_DONE' })
-            })
-          }
-          else {
-            sendBack({ type: 'BEHAVIOR_DONE' })
-          }
-        }
-        catch (err) {
-          console.error('[ReflexMachine] Behavior error:', err)
-          sendBack({ type: 'BEHAVIOR_DONE' })
-        }
-      }),
     },
   }).createMachine({
     id: 'reflex',
@@ -277,10 +209,6 @@ export function createReflexMachine(input: ReflexMachineInput) {
       social: {
         entry: [
           { type: 'notifyModeChange', params: { mode: 'social' } },
-          { type: 'enterSocialMode', params: { bot: null } }, // Bot passed via input
-        ],
-        exit: [
-          { type: 'exitSocialMode', params: { bot: null } },
         ],
         on: {
           TICK: [

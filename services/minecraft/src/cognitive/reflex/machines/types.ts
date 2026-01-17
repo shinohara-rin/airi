@@ -1,8 +1,7 @@
-import type { Vec3 } from 'vec3'
-
 import type { PerceptionAPI } from '../../perception/perception-api'
 import type { MineflayerWithAgents } from '../../types'
-import type { ReflexContext } from '../context'
+import type { ReflexContextState } from '../context'
+import type { ReflexBehavior } from '../types/behavior'
 
 /**
  * Reflex mode states
@@ -12,67 +11,12 @@ export type ReflexMode = 'idle' | 'social' | 'alert' | 'work' | 'wander'
 /**
  * Behavior definition (from existing ReflexBehavior)
  */
-export interface BehaviorDefinition {
-  id: string
-  modes: ReflexMode[]
-  cooldownMs?: number
-  when: (ctx: ReflexContextSnapshot) => boolean
-  score: (ctx: ReflexContextSnapshot) => number
-  run: (api: BehaviorAPI) => void | Promise<void>
-}
+export type BehaviorDefinition = ReflexBehavior
 
 /**
  * Snapshot of reflex context state
  */
-export interface ReflexContextSnapshot {
-  now: number
-  self: {
-    location: Vec3
-    holding: string | null
-    health: number
-    food: number
-  }
-  environment: {
-    time: string
-    weather: 'clear' | 'rain' | 'thunder'
-    nearbyPlayers: Array<{ name: string, distance?: number }>
-    nearbyPlayersGaze: Array<{
-      name: string
-      distanceToSelf: number
-      lookPoint: { x: number, y: number, z: number }
-      hitBlock: null | { name: string, pos: { x: number, y: number, z: number } }
-    }>
-    nearbyEntities: Array<{ name: string, distance?: number, kind?: string }>
-    lightLevel: number
-  }
-  social: {
-    lastSpeaker: string | null
-    lastMessage: string | null
-    lastMessageAt: number | null
-    lastGreetingAtBySpeaker: Record<string, number>
-    lastGesture: string | null
-    lastGestureAt: number | null
-  }
-  threat: {
-    threatScore: number
-    lastThreatAt: number | null
-    lastThreatSource: string | null
-  }
-  attention: {
-    lastSignalType: string | null
-    lastSignalSourceId: string | null
-    lastSignalAt: number | null
-  }
-}
-
-/**
- * API provided to behaviors during execution
- */
-export interface BehaviorAPI {
-  bot: MineflayerWithAgents
-  context: ReflexContext
-  perception: PerceptionAPI
-}
+export type ReflexContextSnapshot = ReflexContextState
 
 /**
  * Reflex machine context
@@ -106,7 +50,7 @@ export interface ReflexMachineContext {
 export type ReflexEvent
   = | { type: 'INIT', bot: MineflayerWithAgents }
     | { type: 'SIGNAL', payload: any }
-    | { type: 'TICK', deltaMs: number, bot: MineflayerWithAgents, perception: PerceptionAPI }
+    | { type: 'TICK', deltaMs: number, bot: MineflayerWithAgents | null, perception: PerceptionAPI }
     | { type: 'TASK_STARTED' }
     | { type: 'TASK_COMPLETED' }
     | { type: 'TASK_FAILED' }
