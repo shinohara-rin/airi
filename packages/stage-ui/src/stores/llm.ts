@@ -25,7 +25,6 @@ export interface StreamOptions {
   tools?: Tool[] | (() => Promise<Tool[] | undefined>)
 }
 
-// TODO: proper format for other error messages.
 function sanitizeMessages(messages: unknown[]): Message[] {
   return messages.map((m: any) => {
     if (m && m.role === 'error') {
@@ -42,6 +41,46 @@ function streamOptionsToolsCompatibilityOk(model: string, chatProvider: ChatProv
   return !!(options?.supportsTools || options?.toolsCompatibility?.get(`${chatProvider.chat(model).baseURL}-${model}`))
 }
 
+function isToolUnsupportedError(err: unknown): boolean {
+  if (err instanceof Error && err.name === new XSAIError('').name) {
+    const errorString = String(err)
+    // Ollama: "registry.ollama.ai/<scope>/<model> does not support tools"
+    if (errorString.includes('does not support tools')) {
+      return true
+    }
+    // OpenRouter: "No endpoints found that support tool use."
+    if (errorString.includes('No endpoints found that support tool use.')) {
+      return true
+    }
+  }
+  return false
+}
+
+function promiseAllWithInterval<T>(promises: (() => Promise<T>)[], interval: number): Promise<{ result?: T, error?: any }[]> {
+  return new Promise((resolve) => {
+    const results: { result?: T, error?: any }[] = []
+    let completed = 0
+
+    promises.forEach((promiseFn, index) => {
+      setTimeout(() => {
+        promiseFn()
+          .then((result) => {
+            results[index] = { result }
+          })
+          .catch((err) => {
+            results[index] = { error: err }
+          })
+          .finally(() => {
+            completed++
+            if (completed === promises.length) {
+              resolve(results)
+            }
+          })
+      }, index * interval)
+    })
+  })
+}
+
 async function streamFrom(model: string, chatProvider: ChatProvider, messages: Message[], options?: StreamOptions) {
   const headers = options?.headers
 
@@ -53,40 +92,43 @@ async function streamFrom(model: string, chatProvider: ChatProvider, messages: M
     return tools ?? []
   }
 
-  return new Promise<void>(async (resolve, reject) => {
-    try {
-      const supportedTools = streamOptionsToolsCompatibilityOk(model, chatProvider, messages, options)
-
-      await streamText({
-        ...chatProvider.chat(model),
-        maxSteps: 10,
-        messages: sanitized,
-        headers,
-        // TODO: we need Automatic tools discovery
-        tools: supportedTools
+  return new Promise<void>((resolve, reject) => {
+    const run = async () => {
+      try {
+        const supportedTools = streamOptionsToolsCompatibilityOk(model, chatProvider, messages, options)
+        const tools = supportedTools
           ? [
               ...await mcp(),
               ...await debug(),
               ...await resolveTools(),
             ]
-          : undefined,
-        async onEvent(event) {
-          try {
-            await options?.onStreamEvent?.(event as StreamEvent)
-            if (event.type === 'finish' && (event.finishReason !== 'tool_calls' || !options?.waitForTools))
-              resolve()
-            else if (event.type === 'error')
-              reject(event.error ?? new Error('Stream error'))
-          }
-          catch (err) {
-            reject(err)
-          }
-        },
-      })
+          : undefined
+
+        await streamText({
+          ...chatProvider.chat(model),
+          maxSteps: 10,
+          messages: sanitized,
+          headers,
+          tools,
+          async onEvent(event) {
+            try {
+              await options?.onStreamEvent?.(event as StreamEvent)
+              if (event.type === 'finish' && (event.finishReason !== 'tool_calls' || !options?.waitForTools))
+                resolve()
+              else if (event.type === 'error')
+                reject(event.error ?? new Error('Stream error'))
+            }
+            catch (err) {
+              reject(err)
+            }
+          },
+        })
+      }
+      catch (err) {
+        reject(err)
+      }
     }
-    catch (err) {
-      reject(err)
-    }
+    run()
   })
 }
 
@@ -97,52 +139,11 @@ export async function attemptForToolsCompatibilityDiscovery(model: string, chatP
       return true
     }
     catch (err) {
-      if (err instanceof Error && err.name === new XSAIError('').name) {
-        // TODO: if you encountered many more errors like these, please, add them here.
-
-        // Ollama
-        /**
-         * {"error":{"message":"registry.ollama.ai/<scope>/<model> does not support tools","type":"api_error","param":null,"code":null}}
-         */
-        if (String(err).includes('does not support tools')) {
-          return false
-        }
-        // OpenRouter
-        /**
-         * {"error":{"message":"No endpoints found that support tool use. To learn more about provider routing, visit: https://openrouter.ai/docs/provider-routing","code":404}}
-         */
-        if (String(err).includes('No endpoints found that support tool use.')) {
-          return false
-        }
+      if (isToolUnsupportedError(err)) {
+        return false
       }
-
       throw err
     }
-  }
-
-  function promiseAllWithInterval<T>(promises: (() => Promise<T>)[], interval: number): Promise<{ result?: T, error?: any }[]> {
-    return new Promise((resolve) => {
-      const results: { result?: T, error?: any }[] = []
-      let completed = 0
-
-      promises.forEach((promiseFn, index) => {
-        setTimeout(() => {
-          promiseFn()
-            .then((result) => {
-              results[index] = { result }
-            })
-            .catch((err) => {
-              results[index] = { error: err }
-            })
-            .finally(() => {
-              completed++
-              if (completed === promises.length) {
-                resolve(results)
-              }
-            })
-        }, index * interval)
-      })
-    })
   }
 
   const attempts = [

@@ -40,6 +40,70 @@ interface QueuedSend {
   }
 }
 
+// Helper: Compose message content from text and attachments
+function composeMessageContent(sendingMessage: string, attachments?: SendOptions['attachments']): string | CommonContentPart[] {
+  const contentParts: CommonContentPart[] = [{ type: 'text', text: sendingMessage }]
+
+  if (attachments) {
+    for (const attachment of attachments) {
+      if (attachment.type === 'image') {
+        contentParts.push({
+          type: 'image_url',
+          image_url: {
+            url: `data:${attachment.mimeType};base64,${attachment.data}`,
+          },
+        })
+      }
+    }
+  }
+
+  return contentParts.length > 1 ? contentParts : sendingMessage
+}
+
+// Helper: Clean and prepare messages for sending
+function prepareMessagesForSend(
+  sessionMessages: Message[],
+  contextsSnapshot: Record<string, unknown>,
+): Message[] {
+  let newMessages = sessionMessages.map((msg) => {
+    const { context: _context, ...withoutContext } = msg
+    const rawMessage = toRaw(withoutContext)
+
+    if (rawMessage.role === 'assistant') {
+      const { slices: _slices, tool_results, categorization: _categorization, ...rest } = rawMessage as ChatAssistantMessage
+      return {
+        ...toRaw(rest),
+        tool_results: toRaw(tool_results),
+      }
+    }
+
+    return rawMessage
+  })
+
+  if (Object.keys(contextsSnapshot).length > 0) {
+    const system = newMessages.slice(0, 1)
+    const afterSystem = newMessages.slice(1, newMessages.length)
+
+    newMessages = [
+      ...system,
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: ''
+              + 'These are the contextual information retrieved or on-demand updated from other modules, you may use them as context for chat, or reference of the next action, tool call, etc.:\n'
+              + `${Object.entries(contextsSnapshot).map(([key, value]) => `Module ${key}: ${JSON.stringify(value)}`).join('\n')}\n`,
+          },
+        ],
+      },
+      ...afterSystem,
+    ]
+  }
+
+  return newMessages as Message[]
+}
+
 export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
   const llmStore = useLLM()
   const consciousnessStore = useConsciousnessStore()
@@ -115,7 +179,6 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
     sending.value = true
 
     const isForegroundSession = () => sessionId === activeSessionId.value
-
     const buildingMessage: StreamingAssistantMessage = { role: 'assistant', content: '', slices: [], tool_results: [], createdAt: Date.now() }
 
     const updateUI = () => {
@@ -130,22 +193,8 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
     try {
       await hooks.emitBeforeMessageComposedHooks(sendingMessage, streamingMessageContext)
 
-      const contentParts: CommonContentPart[] = [{ type: 'text', text: sendingMessage }]
+      const finalContent = composeMessageContent(sendingMessage, options.attachments)
 
-      if (options.attachments) {
-        for (const attachment of options.attachments) {
-          if (attachment.type === 'image') {
-            contentParts.push({
-              type: 'image_url',
-              image_url: {
-                url: `data:${attachment.mimeType};base64,${attachment.data}`,
-              },
-            })
-          }
-        }
-      }
-
-      const finalContent = contentParts.length > 1 ? contentParts : sendingMessage
       if (!streamingMessageContext.input) {
         streamingMessageContext.input = {
           type: 'input:text',
@@ -161,158 +210,24 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       const sessionMessagesForSend = chatSession.getSessionMessages(sessionId)
       sessionMessagesForSend.push({ role: 'user', content: finalContent })
 
-      const categorizer = createStreamingCategorizer(activeProvider.value)
-      let streamPosition = 0
-
-      const parser = useLlmmarkerParser({
-        onLiteral: async (literal) => {
-          if (shouldAbort())
-            return
-
-          categorizer.consume(literal)
-
-          const speechOnly = categorizer.filterToSpeech(literal, streamPosition)
-          streamPosition += literal.length
-
-          if (speechOnly.trim()) {
-            buildingMessage.content += speechOnly
-
-            await hooks.emitTokenLiteralHooks(speechOnly, streamingMessageContext)
-
-            const lastSlice = buildingMessage.slices.at(-1)
-            if (lastSlice?.type === 'text') {
-              lastSlice.text += speechOnly
-            }
-            else {
-              buildingMessage.slices.push({
-                type: 'text',
-                text: speechOnly,
-              })
-            }
-            updateUI()
-          }
-        },
-        onSpecial: async (special) => {
-          if (shouldAbort())
-            return
-
-          await hooks.emitTokenSpecialHooks(special, streamingMessageContext)
-        },
-        onEnd: async (fullText) => {
-          if (isStaleGeneration())
-            return
-
-          const finalCategorization = categorizeResponse(fullText, activeProvider.value)
-
-          buildingMessage.categorization = {
-            speech: finalCategorization.speech,
-            reasoning: finalCategorization.reasoning,
-          }
-          updateUI()
-        },
-        minLiteralEmitLength: 24,
-      })
-
-      const toolCallQueue = createQueue<ChatSlices>({
-        handlers: [
-          async (ctx) => {
-            if (shouldAbort())
-              return
-            if (ctx.data.type === 'tool-call') {
-              buildingMessage.slices.push(ctx.data)
-              updateUI()
-              return
-            }
-
-            if (ctx.data.type === 'tool-call-result') {
-              buildingMessage.tool_results.push(ctx.data)
-              updateUI()
-            }
-          },
-        ],
-      })
-
-      let newMessages = sessionMessagesForSend.map((msg) => {
-        const { context: _context, ...withoutContext } = msg
-        const rawMessage = toRaw(withoutContext)
-
-        if (rawMessage.role === 'assistant') {
-          const { slices: _slices, tool_results, categorization: _categorization, ...rest } = rawMessage as ChatAssistantMessage
-          return {
-            ...toRaw(rest),
-            tool_results: toRaw(tool_results),
-          }
-        }
-
-        return rawMessage
-      })
-
-      const contextsSnapshot = chatContext.getContextsSnapshot()
-      if (Object.keys(contextsSnapshot).length > 0) {
-        const system = newMessages.slice(0, 1)
-        const afterSystem = newMessages.slice(1, newMessages.length)
-
-        newMessages = [
-          ...system,
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: ''
-                  + 'These are the contextual information retrieved or on-demand updated from other modules, you may use them as context for chat, or reference of the next action, tool call, etc.:\n'
-                  + `${Object.entries(contextsSnapshot).map(([key, value]) => `Module ${key}: ${JSON.stringify(value)}`).join('\n')}\n`,
-              },
-            ],
-          },
-          ...afterSystem,
-        ]
-      }
-
-      streamingMessageContext.composedMessage = newMessages as Message[]
+      const newMessages = prepareMessagesForSend(sessionMessagesForSend, chatContext.getContextsSnapshot())
+      streamingMessageContext.composedMessage = newMessages
 
       await hooks.emitAfterMessageComposedHooks(sendingMessage, streamingMessageContext)
       await hooks.emitBeforeSendHooks(sendingMessage, streamingMessageContext)
 
-      let fullText = ''
-      const headers = (options.providerConfig?.headers || {}) as Record<string, string>
-
       if (shouldAbort())
         return
 
-      await llmStore.stream(options.model, options.chatProvider, newMessages as Message[], {
-        headers,
-        tools: options.tools,
-        onStreamEvent: async (event: StreamEvent) => {
-          switch (event.type) {
-            case 'tool-call':
-              toolCallQueue.enqueue({
-                type: 'tool-call',
-                toolCall: event,
-              })
-
-              break
-            case 'tool-result':
-              toolCallQueue.enqueue({
-                type: 'tool-call-result',
-                id: event.toolCallId,
-                result: event.result,
-              })
-
-              break
-            case 'text-delta':
-              fullText += event.text
-              await parser.consume(event.text)
-              break
-            case 'finish':
-              break
-            case 'error':
-              throw event.error ?? new Error('Stream error')
-          }
-        },
-      })
-
-      await parser.end()
+      const fullText = await executeStream(
+        options,
+        newMessages,
+        buildingMessage,
+        streamingMessageContext,
+        updateUI,
+        shouldAbort,
+        isStaleGeneration,
+      )
 
       if (!isStaleGeneration() && buildingMessage.slices.length > 0) {
         sessionMessagesForSend.push(toRaw(buildingMessage))
@@ -340,6 +255,126 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
     finally {
       sending.value = false
     }
+  }
+
+  async function executeStream(
+    options: SendOptions,
+    messages: Message[],
+    buildingMessage: StreamingAssistantMessage,
+    context: ChatStreamEventContext,
+    updateUI: () => void,
+    shouldAbort: () => boolean,
+    isStaleGeneration: () => boolean,
+  ): Promise<string> {
+    const categorizer = createStreamingCategorizer(activeProvider.value)
+    let streamPosition = 0
+    let fullText = ''
+
+    const parser = useLlmmarkerParser({
+      onLiteral: async (literal) => {
+        if (shouldAbort())
+          return
+
+        categorizer.consume(literal)
+
+        const speechOnly = categorizer.filterToSpeech(literal, streamPosition)
+        streamPosition += literal.length
+
+        if (speechOnly.trim()) {
+          buildingMessage.content += speechOnly
+
+          await hooks.emitTokenLiteralHooks(speechOnly, context)
+
+          const lastSlice = buildingMessage.slices.at(-1)
+          if (lastSlice?.type === 'text') {
+            lastSlice.text += speechOnly
+          }
+          else {
+            buildingMessage.slices.push({
+              type: 'text',
+              text: speechOnly,
+            })
+          }
+          updateUI()
+        }
+      },
+      onSpecial: async (special) => {
+        if (shouldAbort())
+          return
+
+        await hooks.emitTokenSpecialHooks(special, context)
+      },
+      onEnd: async (text) => {
+        if (isStaleGeneration())
+          return
+
+        const finalCategorization = categorizeResponse(text, activeProvider.value)
+
+        buildingMessage.categorization = {
+          speech: finalCategorization.speech,
+          reasoning: finalCategorization.reasoning,
+        }
+        updateUI()
+      },
+      minLiteralEmitLength: 24,
+    })
+
+    const toolCallQueue = createQueue<ChatSlices>({
+      handlers: [
+        async (ctx) => {
+          if (shouldAbort())
+            return
+          if (ctx.data.type === 'tool-call') {
+            buildingMessage.slices.push(ctx.data)
+            updateUI()
+            return
+          }
+
+          if (ctx.data.type === 'tool-call-result') {
+            buildingMessage.tool_results.push(ctx.data)
+            updateUI()
+          }
+        },
+      ],
+    })
+
+    const headers = (options.providerConfig?.headers || {}) as Record<string, string>
+
+    await llmStore.stream(options.model, options.chatProvider, messages, {
+      headers,
+      tools: options.tools,
+      onStreamEvent: async (event: StreamEvent) => {
+        switch (event.type) {
+          case 'tool-call':
+            toolCallQueue.enqueue({
+              type: 'tool-call',
+              toolCall: event,
+            })
+
+            break
+          case 'tool-result':
+            toolCallQueue.enqueue({
+              type: 'tool-call-result',
+              id: event.toolCallId,
+              result: event.result,
+            })
+
+            break
+          case 'text-delta':
+            fullText += event.text
+            await parser.consume(event.text)
+            break
+          case 'finish':
+            break
+          case 'error':
+            throw event.error ?? new Error('Stream error')
+        }
+      },
+    })
+
+    await parser.end()
+
+    return fullText
   }
 
   async function ingest(
