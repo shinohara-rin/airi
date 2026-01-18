@@ -2,67 +2,47 @@ import { useDevicesList, useUserMedia } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 
-function calculateVolumeWithLinearNormalize(analyser: AnalyserNode) {
+function getAudioData(analyser: AnalyserNode): number[] {
   const dataBuffer = new Uint8Array(analyser.frequencyBinCount)
   analyser.getByteFrequencyData(dataBuffer)
-
-  const volumeVector: Array<number> = []
-  for (let i = 0; i < 700; i += 80)
-    volumeVector.push(dataBuffer[i])
-
-  const volumeSum = dataBuffer
-    // The volume changes flatten-ly, while the volume is often low, therefore we need to amplify it.
-    // Applying a power function to amplify the volume is helpful, for example:
-    // v ** 1.2 will amplify the volume by 1.2 times
-    .map(v => v ** 1.2)
-    // Scale up the volume values to make them more distinguishable
-    .map(v => v * 1.2)
-    .reduce((acc, cur) => acc + cur, 0)
-
-  return (volumeSum / dataBuffer.length / 100)
-}
-
-function calculateVolumeWithMinMaxNormalize(analyser: AnalyserNode) {
-  const dataBuffer = new Uint8Array(analyser.frequencyBinCount)
-  analyser.getByteFrequencyData(dataBuffer)
-
-  const volumeVector: Array<number> = []
-  for (let i = 0; i < 700; i += 80)
-    volumeVector.push(dataBuffer[i])
-
-  // The volume changes flatten-ly, while the volume is often low, therefore we need to amplify it.
-  // We can apply a power function to amplify the volume, for example
-  // v ** 1.2 will amplify the volume by 1.2 times
-  const amplifiedVolumeVector = dataBuffer.map(v => v ** 1.5)
-
-  // Normalize the amplified values using Min-Max scaling
-  const min = Math.min(...amplifiedVolumeVector)
-  const max = Math.max(...amplifiedVolumeVector)
-  const range = max - min
-
-  let normalizedVolumeVector
-  if (range === 0) {
-    // If range is zero, all values are the same, so normalization is not needed
-    normalizedVolumeVector = amplifiedVolumeVector.map(() => 0) // or any default value
-  }
-  else {
-    normalizedVolumeVector = amplifiedVolumeVector.map(v => (v - min) / range)
-  }
-
-  // Aggregate the volume values
-  const volumeSum = normalizedVolumeVector.reduce((acc, cur) => acc + cur, 0)
-
-  // Average the volume values
-  return volumeSum / dataBuffer.length
+  // Convert to array to avoid integer wrapping/clamping with Uint8Array when applying power functions
+  return Array.from(dataBuffer)
 }
 
 function calculateVolume(analyser: AnalyserNode, mode: 'linear' | 'minmax' = 'linear') {
-  switch (mode) {
-    case 'linear':
-      return calculateVolumeWithLinearNormalize(analyser)
-    case 'minmax':
-      return calculateVolumeWithMinMaxNormalize(analyser)
+  const data = getAudioData(analyser)
+
+  if (mode === 'linear') {
+    const volumeSum = data
+      // The volume changes flatten-ly, while the volume is often low, therefore we need to amplify it.
+      // Applying a power function to amplify the volume is helpful, for example:
+      // v ** 1.2 will amplify the volume by 1.2 times
+      // Scale up the volume values to make them more distinguishable
+      .reduce((acc, v) => acc + (v ** 1.2) * 1.2, 0)
+
+    return (volumeSum / data.length / 100)
   }
+
+  if (mode === 'minmax') {
+    const amplified = data.map(v => v ** 1.5)
+
+    // Normalize the amplified values using Min-Max scaling
+    const min = Math.min(...amplified)
+    const max = Math.max(...amplified)
+    const range = max - min
+
+    if (range === 0) {
+      return 0
+    }
+
+    // Aggregate the volume values
+    const volumeSum = amplified.reduce((acc, v) => acc + (v - min) / range, 0)
+
+    // Average the volume values
+    return volumeSum / data.length
+  }
+
+  return 0
 }
 
 export const useAudioContext = defineStore('audio-context', () => {
