@@ -12,7 +12,11 @@ import type { ReflexExecutor } from './reflex-executor'
 import type { ReflexSkills } from './reflex-skills'
 import type { ReflexBehavior } from './types/behavior'
 
+import { Vec3 } from 'vec3'
+
 import { DebugService } from '../../debug'
+import { Status } from '../../libs/mineflayer/status'
+import { getNearbyEntities, getNearbyPlayers } from '../../skills/world'
 import { greetingBehavior } from './behaviors/greeting'
 import { lookAtBehavior } from './behaviors/look-at'
 import { teabagBehavior } from './behaviors/teabag'
@@ -59,6 +63,8 @@ export class ReflexManager {
     })
 
     this.reflexActor.start()
+
+    this.updateAmbientContext(bot)
 
     // Subscribe to signals
     this.unsubscribe = this.deps.eventBus.subscribe('signal:*', (event) => {
@@ -137,6 +143,8 @@ export class ReflexManager {
     const now = Date.now()
     this.context.updateNow(now)
 
+    this.updateAmbientContext(this.bot)
+
     // 1. Determine Mode
     const mode = this.getMode()
 
@@ -204,6 +212,39 @@ export class ReflexManager {
         }
       })()
     }
+  }
+
+  private updateAmbientContext(bot: MineflayerWithAgents | null): void {
+    if (!bot?.bot?.entity)
+      return
+
+    const pos = bot.bot.entity.position
+    const held = bot.bot.heldItem
+    const block = bot.bot.blockAt(pos)
+
+    const status = bot.status
+    const weather = Status.weatherKind(status.weather)
+
+    const nearbyPlayers = getNearbyPlayers(bot, 64)
+      .map(player => ({ name: player.username ?? 'unknown', distance: player.position.distanceTo(pos) }))
+
+    const nearbyEntities = getNearbyEntities(bot, 32)
+      .map(entity => ({ name: entity.name ?? 'unknown', distance: entity.position.distanceTo(pos), kind: (entity as any).kind }))
+
+    this.context.updateSelf({
+      location: new Vec3(pos.x, pos.y, pos.z),
+      holding: held?.name ?? null,
+      health: bot.bot.health,
+      food: bot.bot.food,
+    })
+
+    this.context.updateEnvironment({
+      time: status.timeOfDay,
+      weather,
+      lightLevel: typeof (block as any)?.light === 'number' ? (block as any).light : 15,
+      nearbyPlayers,
+      nearbyEntities,
+    })
   }
 
   private onModeEnter(mode: ReflexMode, bot: MineflayerWithAgents): void {

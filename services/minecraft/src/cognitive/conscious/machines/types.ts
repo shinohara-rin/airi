@@ -5,7 +5,7 @@ import type { BlackboardState } from '../blackboard'
 /**
  * Conscious machine states
  */
-export type ConsciousState = 'idle' | 'thinking' | 'deciding' | 'executing'
+export type ConsciousState = 'idle' | 'thinking' | 'deciding' | 'evaluating' | 'executing'
 
 /**
  * LLM Response structure
@@ -42,6 +42,9 @@ export interface ConsciousMachineContext {
   /** Current event being processed */
   currentEvent: BotEvent | null
 
+  /** Built context for the current event */
+  currentContext: string | null
+
   /** Last LLM response */
   lastResponse: LLMResponse | null
 
@@ -54,15 +57,9 @@ export interface ConsciousMachineContext {
  */
 export type ConsciousEvent
   = | { type: 'ENQUEUE_EVENT', event: BotEvent }
-    | { type: 'CONTEXT_READY', context: string }
-    | { type: 'LLM_RESPONSE', response: LLMResponse }
-    | { type: 'LLM_ERROR', error: Error }
     | { type: 'ACTION_STARTED', actionId: string }
     | { type: 'ACTION_COMPLETED', actionId: string, result?: unknown }
     | { type: 'ACTION_FAILED', actionId: string, error: unknown }
-    | { type: 'ALL_ACTIONS_DONE' }
-    | { type: 'RETRY' }
-    | { type: 'ABORT' }
 
 /**
  * Input for creating the conscious machine
@@ -77,8 +74,8 @@ export interface ConsciousMachineInput {
   /** Callback to call LLM */
   callLLM: (systemPrompt: string, userMessage: string) => Promise<LLMResponse>
 
-  /** Callback to execute action */
-  executeAction: (action: ActionInstruction) => Promise<void>
+  /** Callback to execute actions */
+  executeActions: (actions: ActionInstruction[]) => Promise<void>
 
   /** Callback when state changes */
   onStateChange?: (state: ConsciousState) => void

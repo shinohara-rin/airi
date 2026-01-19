@@ -160,8 +160,8 @@ export class Brain {
         }
         return decision
       },
-      executeAction: async (action) => {
-        this.deps.taskExecutor.executeActions([action])
+      executeActions: async (actions) => {
+        this.deps.taskExecutor.executeActions(actions)
       },
       onStateChange: (state) => {
         this.updateDebugState()
@@ -172,7 +172,7 @@ export class Brain {
     this.consciousActor.start()
 
     // Subscribe to actor state changes
-    this.consciousActor.subscribe((_snapshot) => {
+    this.consciousActor.subscribe((_snapshot: unknown) => {
       this.updateDebugState()
     })
 

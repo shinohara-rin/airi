@@ -1,4 +1,4 @@
-import type { ConsciousEvent, ConsciousMachineContext, ConsciousMachineInput } from './types'
+import type { ConsciousEvent, ConsciousMachineContext, ConsciousMachineInput, LLMResponse } from './types'
 
 import { assign, createActor, fromPromise, setup } from 'xstate'
 
@@ -32,6 +32,7 @@ function createInitialContext(input: ConsciousMachineInput): ConsciousMachineCon
     inFlightActions: new Set(),
     retryCount: 0,
     currentEvent: null,
+    currentContext: null,
     lastResponse: null,
     nextActionId: 1,
   }
@@ -49,50 +50,41 @@ export function createConsciousMachine(input: ConsciousMachineInput) {
       events: {} as ConsciousEvent,
     },
     guards: {
-      hasQueuedEvents: ({ context }) => hasQueuedEvents(context),
-      shouldRetry: ({ context }) => shouldRetry(context, maxRetries),
-      allActionsDone: ({ context }) => allActionsDone(context),
+      hasQueuedEvents: ({ context }: { context: ConsciousMachineContext }) => hasQueuedEvents(context),
+      shouldRetry: ({ context }: { context: ConsciousMachineContext }) => shouldRetry(context, maxRetries),
+      allActionsDone: ({ context }: { context: ConsciousMachineContext }) => allActionsDone(context),
     },
     actions: {
-      enqueueEvent: assign(({ context, event }) => {
+      enqueueEvent: assign(({ context, event }: { context: ConsciousMachineContext, event: ConsciousEvent }) => {
         if (event.type !== 'ENQUEUE_EVENT')
           return context
         return enqueueEvent(context, event.event)
       }),
 
-      dequeueEvent: assign(({ context }) => dequeueEvent(context)),
+      dequeueEvent: assign(({ context }: { context: ConsciousMachineContext }) => dequeueEvent(context)),
 
-      clearCurrentEvent: assign(({ context }) => clearCurrentEvent(context)),
+      clearCurrentEvent: assign(({ context }: { context: ConsciousMachineContext }) => ({
+        ...clearCurrentEvent(context),
+        currentContext: null,
+      })),
 
-      updateBlackboard: assign(({ context, event }) => {
-        if (event.type !== 'LLM_RESPONSE')
-          return context
-        return updateBlackboard(context, event.response)
-      }),
-
-      addPendingActions: assign(({ context, event }) => {
-        if (event.type !== 'LLM_RESPONSE')
-          return context
-        return addPendingActions(context, event.response.actions)
-      }),
-
-      markActionStarted: assign(({ context, event }) => {
+      markActionStarted: assign(({ context, event }: { context: ConsciousMachineContext, event: ConsciousEvent }) => {
         if (event.type !== 'ACTION_STARTED')
           return context
         return markActionStarted(context, event.actionId)
       }),
 
-      markActionCompleted: assign(({ context, event }) => {
+      markActionCompleted: assign(({ context, event }: { context: ConsciousMachineContext, event: ConsciousEvent }) => {
         if (event.type !== 'ACTION_COMPLETED')
           return context
         return markActionCompleted(context, event.actionId)
       }),
 
-      incrementRetry: assign(({ context }) => incrementRetry(context)),
-      resetRetry: assign(({ context }) => resetRetry(context)),
-      clearAllActions: assign(({ context }) => clearAllActions(context)),
+      incrementRetry: assign(({ context }: { context: ConsciousMachineContext }) => incrementRetry(context)),
+      resetRetry: assign(({ context }: { context: ConsciousMachineContext }) => resetRetry(context)),
+      clearAllActions: assign(({ context }: { context: ConsciousMachineContext }) => clearAllActions(context)),
 
-      notifyStateChange: (_, params: { state: string }) => {
+      notifyStateChange: (_: unknown, params: { state: string }) => {
         if (input.onStateChange) {
           input.onStateChange(params.state as any)
         }
@@ -109,9 +101,12 @@ export function createConsciousMachine(input: ConsciousMachineInput) {
         return await input.callLLM(systemPrompt, userMessage)
       }),
 
-      executeAction: fromPromise(async ({ input: ctx }: { input: any }) => {
-        const { action } = ctx
-        await input.executeAction(action)
+      executePendingActions: fromPromise(async ({ input: ctx }: { input: any }) => {
+        const { actions } = ctx
+        if (!Array.isArray(actions) || actions.length === 0)
+          return
+
+        await input.executeActions(actions)
       }),
     },
   }).createMachine({
@@ -148,6 +143,11 @@ export function createConsciousMachine(input: ConsciousMachineInput) {
           }),
           onDone: {
             target: 'deciding',
+            actions: [
+              assign(({ event }) => ({
+                currentContext: (event as any).output as string,
+              })),
+            ],
           },
           onError: {
             target: 'idle',
@@ -161,18 +161,18 @@ export function createConsciousMachine(input: ConsciousMachineInput) {
         ],
         invoke: {
           src: 'callLLM',
-          input: () => ({
-            systemPrompt: 'brain-prompt', // Simplified for now
-            userMessage: 'context', // Will be replaced with actual context
+          input: ({ context }: { context: ConsciousMachineContext }) => ({
+            systemPrompt: 'brain-prompt',
+            userMessage: context.currentContext ?? '',
           }),
           onDone: {
             target: 'evaluating',
             actions: [
               assign(({ event }) => ({
-                lastResponse: event.output,
+                lastResponse: (event as any).output,
               })),
-              'updateBlackboard',
-              'addPendingActions',
+              assign(({ context, event }) => updateBlackboard(context, (event as any).output as LLMResponse)),
+              assign(({ context, event }) => addPendingActions(context, ((event as any).output as LLMResponse).actions)),
             ],
           },
           onError: [
@@ -196,7 +196,7 @@ export function createConsciousMachine(input: ConsciousMachineInput) {
         always: [
           {
             target: 'executing',
-            guard: ({ context }) => context.pendingActions.size > 0,
+            guard: ({ context }: { context: ConsciousMachineContext }) => context.pendingActions.size > 0,
           },
           {
             target: 'idle',
@@ -207,6 +207,12 @@ export function createConsciousMachine(input: ConsciousMachineInput) {
         entry: [
           { type: 'notifyStateChange', params: { state: 'executing' } },
         ],
+        invoke: {
+          src: 'executePendingActions',
+          input: ({ context }: { context: ConsciousMachineContext }) => ({
+            actions: [...context.pendingActions.values()],
+          }),
+        },
         on: {
           ACTION_STARTED: {
             actions: ['markActionStarted'],
@@ -221,7 +227,7 @@ export function createConsciousMachine(input: ConsciousMachineInput) {
         always: [
           {
             target: 'thinking',
-            guard: ({ context }) => hasQueuedEvents(context) && allActionsDone(context),
+            guard: ({ context }: { context: ConsciousMachineContext }) => hasQueuedEvents(context) && allActionsDone(context),
           },
           {
             target: 'idle',
