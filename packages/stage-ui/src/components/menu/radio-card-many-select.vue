@@ -53,6 +53,40 @@ const searchQuery = defineModel<string>('searchQuery')
 const isListExpanded = ref(false)
 const customValue = ref('')
 
+// Constants for scoring to make behavior explicit and tunable
+const SCORE_EXACT = 100
+const SCORE_STARTS_WITH = 80
+const SCORE_INCLUDES = 60
+const SCORE_SUBSEQUENCE = 40
+const DESC_WEIGHT = 0.5
+
+function getMatchScore(query: string, text: string): number {
+  if (!text)
+    return 0
+  const q = query.toLowerCase()
+  const t = text.toLowerCase()
+
+  if (t === q)
+    return SCORE_EXACT
+  if (t.startsWith(q))
+    return SCORE_STARTS_WITH
+  if (t.includes(q))
+    return SCORE_INCLUDES
+
+  // Subsequence check
+  let i = 0
+  let j = 0
+  while (i < q.length && j < t.length) {
+    if (q[i] === t[j])
+      i++
+    j++
+  }
+  if (i === q.length)
+    return SCORE_SUBSEQUENCE
+
+  return 0
+}
+
 const filteredItems = computed(() => {
   let result = [...props.items]
 
@@ -66,12 +100,27 @@ const filteredItems = computed(() => {
     })
   }
 
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    result = result.filter(item =>
-      item.name.toLowerCase().includes(query)
-      || (item.description && item.description.toLowerCase().includes(query)),
-    )
+  const trimmedQuery = searchQuery.value?.trim()
+
+  if (trimmedQuery && trimmedQuery.length > 0) {
+    // Map items to items with scores
+    const scoredItems = result.map((item) => {
+      const nameScore = getMatchScore(trimmedQuery, item.name)
+      const descScore = item.description ? getMatchScore(trimmedQuery, item.description) * DESC_WEIGHT : 0
+      // Normalize id to string to avoid runtime errors if IDs are numbers/mixed
+      const idScore = getMatchScore(trimmedQuery, String(item.id))
+
+      return {
+        item,
+        score: Math.max(nameScore, descScore, idScore),
+      }
+    })
+
+    // Filter and sort
+    result = scoredItems
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map(({ item }) => item)
   }
 
   // Add "Use custom: ..." option if searching and custom input is allowed
@@ -80,7 +129,7 @@ const filteredItems = computed(() => {
     // Check against checks if the exact ID exists to avoid duplicates
     const exactMatch = result.some(i => i.id.toLowerCase() === query.toLowerCase())
     if (!exactMatch) {
-      result.push({
+      result.unshift({
         id: query,
         name: query,
         description: props.customOptionDescription,
