@@ -53,7 +53,7 @@ const searchQuery = defineModel<string>('searchQuery')
 const isListExpanded = ref(false)
 const customValue = ref('')
 
-// Constants for tuning the fuzzy search heuristic
+// Constants for scoring to make behavior explicit and tunable
 const SCORE_EXACT = 100
 const SCORE_STARTS_WITH = 80
 const SCORE_INCLUDES = 60
@@ -129,7 +129,7 @@ const filteredItems = computed(() => {
     // Check against checks if the exact ID exists to avoid duplicates
     const exactMatch = result.some(i => i.id.toLowerCase() === query.toLowerCase())
     if (!exactMatch) {
-      result.push({
+      result.unshift({
         id: query,
         name: query,
         description: props.customOptionDescription,
