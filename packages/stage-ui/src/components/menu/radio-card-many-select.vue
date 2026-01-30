@@ -53,6 +53,13 @@ const searchQuery = defineModel<string>('searchQuery')
 const isListExpanded = ref(false)
 const customValue = ref('')
 
+// Constants for tuning the fuzzy search heuristic
+const SCORE_EXACT = 100
+const SCORE_STARTS_WITH = 80
+const SCORE_INCLUDES = 60
+const SCORE_SUBSEQUENCE = 40
+const DESC_WEIGHT = 0.5
+
 function getMatchScore(query: string, text: string): number {
   if (!text)
     return 0
@@ -60,11 +67,11 @@ function getMatchScore(query: string, text: string): number {
   const t = text.toLowerCase()
 
   if (t === q)
-    return 100
+    return SCORE_EXACT
   if (t.startsWith(q))
-    return 80
+    return SCORE_STARTS_WITH
   if (t.includes(q))
-    return 60
+    return SCORE_INCLUDES
 
   // Subsequence check
   let i = 0
@@ -75,7 +82,7 @@ function getMatchScore(query: string, text: string): number {
     j++
   }
   if (i === q.length)
-    return 40
+    return SCORE_SUBSEQUENCE
 
   return 0
 }
@@ -93,14 +100,16 @@ const filteredItems = computed(() => {
     })
   }
 
-  if (searchQuery.value) {
-    const query = searchQuery.value.trim()
+  const trimmedQuery = searchQuery.value?.trim()
 
+  if (trimmedQuery && trimmedQuery.length > 0) {
     // Map items to items with scores
     const scoredItems = result.map((item) => {
-      const nameScore = getMatchScore(query, item.name)
-      const descScore = item.description ? getMatchScore(query, item.description) * 0.5 : 0
-      const idScore = getMatchScore(query, item.id)
+      const nameScore = getMatchScore(trimmedQuery, item.name)
+      const descScore = item.description ? getMatchScore(trimmedQuery, item.description) * DESC_WEIGHT : 0
+      // Normalize id to string to avoid runtime errors if IDs are numbers/mixed
+      const idScore = getMatchScore(trimmedQuery, String(item.id))
+
       return {
         item,
         score: Math.max(nameScore, descScore, idScore),
