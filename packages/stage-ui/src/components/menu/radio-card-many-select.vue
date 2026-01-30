@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import Alert from '../misc/alert.vue'
 import RadioCardDetail from './radio-card-detail.vue'
@@ -52,6 +52,19 @@ const searchQuery = defineModel<string>('searchQuery')
 
 const isListExpanded = ref(false)
 const customValue = ref('')
+const listContainer = ref<HTMLElement | null>(null)
+
+watch(isListExpanded, (expanded) => {
+  if (expanded) {
+    nextTick(() => {
+      if (listContainer.value && modelValue.value) {
+        const selectedElement = listContainer.value.querySelector(`[data-value="${CSS.escape(modelValue.value)}"]`)
+        if (selectedElement)
+          selectedElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    })
+  }
+})
 
 // Constants for scoring to make behavior explicit and tunable
 const SCORE_EXACT = 100
@@ -122,6 +135,17 @@ const filteredItems = computed(() => {
       .sort((a, b) => b.score - a.score)
       .map(({ item }) => item)
   }
+  else if (!isListExpanded.value) {
+    // If not searching and not expanded, sort by selection (selected first)
+    // This maintains the "collapsed view" behavior where the selected item is first
+    result.sort((a, b) => {
+      if (a.id === modelValue.value)
+        return -1
+      if (b.id === modelValue.value)
+        return 1
+      return 0
+    })
+  }
 
   // Add "Use custom: ..." option if searching and custom input is allowed
   if (props.allowCustom && searchQuery.value) {
@@ -186,6 +210,7 @@ function updateCustomValue(value: string) {
       <div class="relative">
         <!-- Responsive grid container -->
         <div
+          ref="listContainer"
           :class="[
             isListExpanded
               ? 'grid grid-cols-1 md:grid-cols-2 gap-4'
@@ -209,6 +234,7 @@ function updateCustomValue(value: string) {
             :key="item.id"
             v-model="modelValue"
             :value="item.id"
+            :data-value="item.id"
             :title="item.name"
             :description="item.description"
             :deprecated="item.deprecated"
