@@ -53,6 +53,33 @@ const searchQuery = defineModel<string>('searchQuery')
 const isListExpanded = ref(false)
 const customValue = ref('')
 
+function getMatchScore(query: string, text: string): number {
+  if (!text)
+    return 0
+  const q = query.toLowerCase()
+  const t = text.toLowerCase()
+
+  if (t === q)
+    return 100
+  if (t.startsWith(q))
+    return 80
+  if (t.includes(q))
+    return 60
+
+  // Subsequence check
+  let i = 0
+  let j = 0
+  while (i < q.length && j < t.length) {
+    if (q[i] === t[j])
+      i++
+    j++
+  }
+  if (i === q.length)
+    return 40
+
+  return 0
+}
+
 const filteredItems = computed(() => {
   let result = [...props.items]
 
@@ -67,11 +94,24 @@ const filteredItems = computed(() => {
   }
 
   if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    result = result.filter(item =>
-      item.name.toLowerCase().includes(query)
-      || (item.description && item.description.toLowerCase().includes(query)),
-    )
+    const query = searchQuery.value.trim()
+
+    // Map items to items with scores
+    const scoredItems = result.map((item) => {
+      const nameScore = getMatchScore(query, item.name)
+      const descScore = item.description ? getMatchScore(query, item.description) * 0.5 : 0
+      const idScore = getMatchScore(query, item.id)
+      return {
+        item,
+        score: Math.max(nameScore, descScore, idScore),
+      }
+    })
+
+    // Filter and sort
+    result = scoredItems
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map(({ item }) => item)
   }
 
   // Add "Use custom: ..." option if searching and custom input is allowed
