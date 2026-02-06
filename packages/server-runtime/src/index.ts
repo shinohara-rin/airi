@@ -71,6 +71,13 @@ function send(peer: Peer, event: WebSocketEvent<Record<string, unknown>> | strin
   peer.send(typeof event === 'string' ? event : JSON.stringify(event))
 }
 
+function sanitizeEventForLog(event: WebSocketEvent<any>) {
+  return {
+    ...event,
+    data: '[REDACTED]',
+  }
+}
+
 export function setupApp(options?: {
   instanceId?: string
   auth?: {
@@ -370,18 +377,18 @@ export function setupApp(options?: {
       }
 
       if (decision?.type === 'drop') {
-        logger.withFields({ peer: peer.id, peerName: p.name, event }).debug('routing dropped event')
+        logger.withFields({ peer: peer.id, peerName: p.name, event: sanitizeEventForLog(event) }).debug('routing dropped event')
         return
       }
 
       const targetIds = decision?.type === 'targets' ? decision.targetIds : undefined
       const shouldBroadcast = decision?.type === 'broadcast' || !targetIds
 
-      logger.withFields({ peer: peer.id, peerName: p.name, event }).debug('broadcasting event to peers')
+      logger.withFields({ peer: peer.id, peerName: p.name, event: sanitizeEventForLog(event) }).debug('broadcasting event to peers')
 
       for (const [id, other] of peers.entries()) {
         if (id === peer.id) {
-          logger.withFields({ peer: peer.id, peerName: p.name, event }).debug('not sending event to self')
+          logger.withFields({ peer: peer.id, peerName: p.name, event: sanitizeEventForLog(event) }).debug('not sending event to self')
           continue
         }
 
@@ -394,11 +401,11 @@ export function setupApp(options?: {
         }
 
         try {
-          logger.withFields({ fromPeer: peer.id, fromPeerName: p.name, toPeer: other.peer.id, toPeerName: other.name, event }).debug('sending event to peer')
+          logger.withFields({ fromPeer: peer.id, fromPeerName: p.name, toPeer: other.peer.id, toPeerName: other.name, event: sanitizeEventForLog(event) }).debug('sending event to peer')
           other.peer.send(payload)
         }
         catch (err) {
-          logger.withFields({ fromPeer: peer.id, fromPeerName: p.name, toPeer: other.peer.id, toPeerName: other.name, event }).withError(err as Error).error('failed to send event to peer, removing peer')
+          logger.withFields({ fromPeer: peer.id, fromPeerName: p.name, toPeer: other.peer.id, toPeerName: other.name, event: sanitizeEventForLog(event) }).withError(err as Error).error('failed to send event to peer, removing peer')
           logger.withFields({ peer: peer.id, peerName: other.name }).debug('removing closed peer')
           peers.delete(id)
 

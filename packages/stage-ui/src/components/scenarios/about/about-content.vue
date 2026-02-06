@@ -109,6 +109,7 @@ const hasBuildInfo = computed(() => {
           ]"
           :href="link.href"
           target="_blank"
+          rel="noopener noreferrer"
         >
           <div :class="link.icon" />
           <div>{{ link.label }}</div>

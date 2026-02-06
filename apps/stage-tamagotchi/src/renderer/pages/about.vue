@@ -172,6 +172,7 @@ const releaseNotesContent = computed(() => {
             :key="link.href"
             :href="link.href"
             target="_blank"
+            rel="noopener noreferrer"
             class="contents"
           >
             <Button
