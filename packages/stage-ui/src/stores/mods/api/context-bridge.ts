@@ -226,7 +226,7 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
               'gen-ai:chat': {
                 message: context.message as UserMessage,
                 composedMessage: context.composedMessage,
-                contexts: context.contexts,
+                contexts: context.contexts as any,
                 input: context.input,
               },
             },
@@ -253,7 +253,7 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
               'gen-ai:chat': {
                 message: context.message as UserMessage,
                 composedMessage: context.composedMessage,
-                contexts: context.contexts,
+                contexts: context.contexts as any,
                 input: context.input,
               },
             },
