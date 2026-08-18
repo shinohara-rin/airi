@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Live2DEyeFocusSource } from '../../composables/live2d'
+import type { Live2DIdleMotionSettings } from '../../composables/live2d/idle-mouse'
 
 import { Screen } from '@proj-airi/ui'
 import { storeToRefs } from 'pinia'
@@ -48,6 +49,10 @@ const {
   live2dEyeTracking,
   live2dIdleAnimationEnabled,
   live2dForceIdleEyeAnimation,
+  live2dIdleMotionFrequency,
+  live2dIdleHeadMotionFrequency,
+  live2dIdleBodyMotionTuning,
+  live2dIdleHeadMotionTuning,
   live2dAutoBlinkEnabled,
   live2dForceAutoBlinkEnabled,
   live2dExpressionEnabled,
@@ -73,6 +78,14 @@ const mouseModelOffset = computed(() => {
     live2dCanvasRef.value?.canvasElement()?.getBoundingClientRect(),
   )
 })
+const live2dIdleBodyMotionSettings = computed<Live2DIdleMotionSettings>(() => ({
+  ...live2dIdleBodyMotionTuning.value,
+  frequency: live2dIdleMotionFrequency.value,
+}))
+const live2dIdleHeadMotionSettings = computed<Live2DIdleMotionSettings>(() => ({
+  ...live2dIdleHeadMotionTuning.value,
+  frequency: live2dIdleHeadMotionFrequency.value,
+}))
 
 watch(() => props.cursorPosition, (cursorPosition) => {
   activeCursorPosition.value = cursorPosition ? { ...cursorPosition } : null
@@ -136,6 +149,8 @@ defineExpose({
         :theme-colors-hue-dynamic="themeColorsHueDynamic"
         :live2d-idle-animation-enabled="live2dIdleAnimationEnabled"
         :live2d-force-idle-eye-animation="live2dForceIdleEyeAnimation"
+        :live2d-idle-body-motion-settings="live2dIdleBodyMotionSettings"
+        :live2d-idle-head-motion-settings="live2dIdleHeadMotionSettings"
         :live2d-auto-blink-enabled="live2dAutoBlinkEnabled"
         :live2d-force-auto-blink-enabled="live2dForceAutoBlinkEnabled"
         :live2d-expression-enabled="live2dExpressionEnabled"

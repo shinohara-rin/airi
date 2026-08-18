@@ -2,6 +2,7 @@
 import type { Application } from '@pixi/app'
 
 import type { PixiLive2DInternalModel } from '../../../composables/live2d'
+import type { Live2DIdleMotionSettings, Live2DModelMouseOffset } from '../../../composables/live2d/idle-mouse'
 
 import { listenBeatSyncBeatSignal } from '@proj-airi/stage-shared/beat-sync'
 import { useTheme } from '@proj-airi/ui'
@@ -17,6 +18,7 @@ import { computed, onMounted, onUnmounted, ref, shallowRef, toRef, watch } from 
 import {
   createBeatSyncController,
   useExpressionController,
+  useLive2DIdleEyeFocus,
   useLive2DMotionManagerUpdate,
   useMotionUpdatePluginAutoEyeBlink,
   useMotionUpdatePluginBeatSync,
@@ -24,9 +26,11 @@ import {
   useMotionUpdatePluginExpression,
   useMotionUpdatePluginIdleDisable,
   useMotionUpdatePluginIdleFocus,
+  useMotionUpdatePluginIdleMouseMotion,
   useMotionUpdatePluginLipSync,
 } from '../../../composables/live2d'
 import { useFitModel } from '../../../composables/live2d/fit-model'
+import { createLive2DIdleMouseMotion, defaultLive2DIdleMotionSettings } from '../../../composables/live2d/idle-mouse'
 import { Emotion, EmotionNeutralMotionName } from '../../../constants/emotions'
 import { useL2dViewControl, useLive2dParams } from '../../../stores'
 
@@ -41,13 +45,15 @@ const props = withDefaults(defineProps<{
   height: number
   paused?: boolean
   focusAt?: { x: number, y: number }
-  mouseOffset?: { x: number, y: number }
+  mouseOffset?: Live2DModelMouseOffset
   eyeTracking?: boolean
   eyeFocusSourceActive?: boolean
   themeColorsHue?: number
   themeColorsHueDynamic?: boolean
   live2dIdleAnimationEnabled?: boolean
   live2dForceIdleEyeAnimation?: boolean
+  live2dIdleBodyMotionSettings?: Live2DIdleMotionSettings
+  live2dIdleHeadMotionSettings?: Live2DIdleMotionSettings
   live2dAutoBlinkEnabled?: boolean
   live2dForceAutoBlinkEnabled?: boolean
   live2dExpressionEnabled?: boolean
@@ -66,6 +72,16 @@ const props = withDefaults(defineProps<{
   themeColorsHueDynamic: false,
   live2dIdleAnimationEnabled: true,
   live2dForceIdleEyeAnimation: true,
+  live2dIdleBodyMotionSettings: () => ({
+    ...defaultLive2DIdleMotionSettings,
+    x: { ...defaultLive2DIdleMotionSettings.x },
+    y: { ...defaultLive2DIdleMotionSettings.y },
+  }),
+  live2dIdleHeadMotionSettings: () => ({
+    ...defaultLive2DIdleMotionSettings,
+    x: { ...defaultLive2DIdleMotionSettings.x },
+    y: { ...defaultLive2DIdleMotionSettings.y },
+  }),
   live2dAutoBlinkEnabled: true,
   live2dForceAutoBlinkEnabled: false,
   live2dExpressionEnabled: true,
@@ -88,9 +104,30 @@ let isUnmounted = false
 
 const modelLoadMutex = new Mutex()
 
+const idleBodyMotion = createLive2DIdleMouseMotion(() => ({
+  width: props.width,
+  height: props.height,
+}), {
+  settings: () => props.live2dIdleBodyMotionSettings,
+})
+const idleHeadMotion = createLive2DIdleMouseMotion(() => ({
+  width: props.width,
+  height: props.height,
+}), {
+  settings: () => props.live2dIdleHeadMotionSettings,
+})
+const idleEyeFocus = useLive2DIdleEyeFocus(idleHeadMotion.direction)
+
+const modelMouseOffset = computed<Live2DModelMouseOffset>(() => {
+  if (props.eyeTracking && props.eyeFocusSourceActive)
+    return props.mouseOffset
+
+  return idleBodyMotion.offset.value
+})
+
 const offset = computed(() => ({
-  x: (position.value.x / 100) * props.width + props.mouseOffset.x,
-  y: -(position.value.y / 100) * props.height + props.mouseOffset.y,
+  x: (position.value.x / 100) * props.width + modelMouseOffset.value.x,
+  y: -(position.value.y / 100) * props.height + modelMouseOffset.value.y,
 }))
 
 const pixiApp = toRef(() => props.app)
@@ -355,8 +392,10 @@ async function loadModel() {
     })
 
     motionManagerUpdate.register(useMotionUpdatePluginBeatSync(beatSync), 'pre')
-    motionManagerUpdate.register(useMotionUpdatePluginIdleDisable(), 'pre')
-    motionManagerUpdate.register(useMotionUpdatePluginIdleFocus(), 'post')
+    motionManagerUpdate.register(useMotionUpdatePluginIdleMouseMotion(idleBodyMotion, mouseOffset), 'pre')
+    motionManagerUpdate.register(useMotionUpdatePluginIdleMouseMotion(idleHeadMotion, mouseOffset), 'pre')
+    motionManagerUpdate.register(useMotionUpdatePluginIdleDisable(idleEyeFocus), 'pre')
+    motionManagerUpdate.register(useMotionUpdatePluginIdleFocus(idleEyeFocus), 'post')
     // Both run in 'final' stage (ignores handled state).
     // Expression first: sets desired parameter values (e.g. closed eyes = 0).
     // Blink second: reads post-expression eye values, Multiply-modulates on top.
@@ -364,7 +403,7 @@ async function loadModel() {
     motionManagerUpdate.register(useMotionUpdatePluginExpression(expressionController), 'final')
     motionManagerUpdate.register(useMotionUpdatePluginAutoEyeBlink(live2dExpressionEnabled), 'final')
     motionManagerUpdate.register(useMotionUpdatePluginLipSync(mouthOpenSize, nowSpeaking), 'final')
-    motionManagerUpdate.register(useMotionUpdatePluginBodyTilt(mouseOffset), 'final')
+    motionManagerUpdate.register(useMotionUpdatePluginBodyTilt(mouseOffset, idleBodyMotion.offset), 'final')
 
     const hookedUpdate = motionManager.update as (model: PixiLive2DInternalModel['coreModel'], now: number) => boolean
     motionManager.update = function (model: PixiLive2DInternalModel['coreModel'], now: number) {

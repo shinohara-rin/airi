@@ -3,6 +3,7 @@ import type { Ref } from 'vue'
 
 import type { BeatSyncController } from './beat-sync'
 import type { useExpressionController } from './expression-controller'
+import type { Live2DIdleMouseMotion, Live2DModelMouseOffset } from './idle-mouse'
 
 import { useLive2DIdleEyeFocus } from './animation'
 
@@ -522,21 +523,27 @@ export function useMotionUpdatePluginLipSync(
 }
 
 /**
- * Applies the horizontal mouse offset to the model body tilt.
+ * Applies mouse or procedural body offsets to the model body lean.
  *
  * The stored body angle remains the base value. Mouse tracking adds a temporary
  * offset while active, then the plugin restores the stored value.
  */
 export function useMotionUpdatePluginBodyTilt(
-  mouseOffset: Ref<{ x: number, y: number }>,
+  mouseOffset: Ref<Live2DModelMouseOffset>,
+  idleMouseOffset: Readonly<Ref<Live2DModelMouseOffset>>,
 ): MotionManagerPlugin {
+  const bodyAngleXMouseMultiplier = 0.5
+  const bodyAngleYMouseMultiplier = 0.5
   const bodyTiltMouseMultiplier = 2
   let trackingWasActive = false
 
   return (ctx) => {
-    const trackingActive = ctx.live2dEyeTrackingEnabled.value && ctx.live2dEyeFocusSourceActive.value
-    if (!trackingActive) {
+    const externalTrackingActive = ctx.live2dEyeTrackingEnabled.value && ctx.live2dEyeFocusSourceActive.value
+    const idleTrackingActive = ctx.isIdleMotion && ctx.live2dForceIdleEyeAnimation.value && !externalTrackingActive
+    if (!externalTrackingActive && !idleTrackingActive) {
       if (trackingWasActive) {
+        ctx.model.setParameterValueById('ParamBodyAngleX', ctx.modelParameters.value.bodyAngleX)
+        ctx.model.setParameterValueById('ParamBodyAngleY', ctx.modelParameters.value.bodyAngleY)
         ctx.model.setParameterValueById('ParamBodyAngleZ', ctx.modelParameters.value.bodyAngleZ)
         trackingWasActive = false
       }
@@ -544,9 +551,36 @@ export function useMotionUpdatePluginBodyTilt(
     }
 
     trackingWasActive = true
+    const offset = externalTrackingActive ? mouseOffset.value : idleMouseOffset.value
+    ctx.model.setParameterValueById(
+      'ParamBodyAngleX',
+      ctx.modelParameters.value.bodyAngleX + offset.x * bodyAngleXMouseMultiplier,
+    )
+    ctx.model.setParameterValueById(
+      'ParamBodyAngleY',
+      ctx.modelParameters.value.bodyAngleY + offset.y * bodyAngleYMouseMultiplier,
+    )
     ctx.model.setParameterValueById(
       'ParamBodyAngleZ',
-      ctx.modelParameters.value.bodyAngleZ + mouseOffset.value.x * bodyTiltMouseMultiplier,
+      ctx.modelParameters.value.bodyAngleZ
+      + offset.x * bodyTiltMouseMultiplier,
     )
+  }
+}
+
+export function useMotionUpdatePluginIdleMouseMotion(
+  idleMouseMotion: Live2DIdleMouseMotion,
+  mouseOffset: Ref<Live2DModelMouseOffset>,
+): MotionManagerPlugin {
+  return (ctx) => {
+    const externalTrackingActive = ctx.live2dEyeTrackingEnabled.value && ctx.live2dEyeFocusSourceActive.value
+    const idleTrackingActive = ctx.isIdleMotion && ctx.live2dForceIdleEyeAnimation.value && !externalTrackingActive
+
+    if (!idleTrackingActive) {
+      idleMouseMotion.reset(externalTrackingActive ? mouseOffset.value : undefined)
+      return
+    }
+
+    idleMouseMotion.update(ctx.now, ctx.timeDelta)
   }
 }

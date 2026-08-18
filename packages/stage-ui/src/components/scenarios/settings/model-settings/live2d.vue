@@ -8,6 +8,8 @@ import { storeToRefs } from 'pinia'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import IdleMotionTuning from './idle-motion-tuning.vue'
+
 import { PropertyPoint } from '../../../data-pane'
 import { Section } from '../../../layouts'
 import { ColorPalette } from '../../../widgets'
@@ -37,6 +39,10 @@ const {
   live2dMaxFps,
   live2dRenderScale,
   live2dForceIdleEyeAnimation,
+  live2dIdleMotionFrequency,
+  live2dIdleHeadMotionFrequency,
+  live2dIdleBodyMotionTuning,
+  live2dIdleHeadMotionTuning,
 } = storeToRefs(settings)
 
 const live2d = useLive2dParams()
@@ -265,6 +271,38 @@ function handleMotionSelect(selectedMotionPath: string | number | undefined) {
         </div>
       </template>
     </FieldRange>
+  </Section>
+  <Section
+    :title="t('settings.live2d.animation.idle-motion-tuning.title')"
+    icon="i-solar:tuning-2-bold-duotone"
+    :class="[
+      'rounded-xl',
+      'bg-white/80  dark:bg-black/75',
+      'backdrop-blur-lg',
+    ]"
+    size="sm"
+    :expand="false"
+  >
+    <p text-xs text-neutral-500 dark:text-neutral-400>
+      {{ t('settings.live2d.animation.idle-motion-tuning.description') }}
+    </p>
+    <IdleMotionTuning v-model="live2dIdleBodyMotionTuning" v-model:frequency="live2dIdleMotionFrequency" />
+  </Section>
+  <Section
+    :title="t('settings.live2d.animation.idle-head-motion-tuning.title')"
+    icon="i-solar:face-scan-circle-bold-duotone"
+    :class="[
+      'rounded-xl',
+      'bg-white/80  dark:bg-black/75',
+      'backdrop-blur-lg',
+    ]"
+    size="sm"
+    :expand="false"
+  >
+    <p text-xs text-neutral-500 dark:text-neutral-400>
+      {{ t('settings.live2d.animation.idle-head-motion-tuning.description') }}
+    </p>
+    <IdleMotionTuning v-model="live2dIdleHeadMotionTuning" v-model:frequency="live2dIdleHeadMotionFrequency" />
   </Section>
   <Section
     v-if="allowExtractColors"

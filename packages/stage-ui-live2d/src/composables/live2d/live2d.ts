@@ -1,5 +1,9 @@
+import type { Live2DIdleMotionTuning } from './idle-mouse'
+
 import { useLocalStorageManualReset, useVersionedLocalStorageManualReset } from '@proj-airi/stage-shared/composables'
 import { defineStore } from 'pinia'
+
+import { defaultLive2DIdleMotionTuning } from './idle-mouse'
 
 const live2dEyeTracking = useLocalStorageManualReset<boolean>('settings/live2d/eye-tracking', true)
 /** Offset from model center to the eyes of the model, in percentages of full model width/height */
@@ -7,6 +11,27 @@ const live2dModelEyeOffset = useLocalStorageManualReset('settings/live2d/model-e
 const live2dIdleAnimationEnabled = useLocalStorageManualReset<boolean>('settings/live2d/idle-animation-enabled', true)
 /** Let the avatar look around while no cursor tracking source is active. */
 const live2dForceIdleEyeAnimation = useLocalStorageManualReset<boolean>('settings/live2d/idle-eye-animation-enabled', true)
+const live2dIdleMotionFrequency = useLocalStorageManualReset<number>('settings/live2d/idle-motion-frequency', 1)
+const live2dIdleHeadMotionFrequency = useLocalStorageManualReset<number>('settings/live2d/idle-head-motion-frequency', 1)
+
+function createIdleMotionTuning() {
+  return {
+    ...defaultLive2DIdleMotionTuning,
+    x: { ...defaultLive2DIdleMotionTuning.x },
+    y: { ...defaultLive2DIdleMotionTuning.y },
+  }
+}
+
+const live2dIdleBodyMotionTuning = useLocalStorageManualReset<Live2DIdleMotionTuning>(
+  'settings/live2d/idle-motion-tuning',
+  createIdleMotionTuning(),
+  { deep: true },
+)
+const live2dIdleHeadMotionTuning = useLocalStorageManualReset<Live2DIdleMotionTuning>(
+  'settings/live2d/idle-head-motion-tuning',
+  createIdleMotionTuning(),
+  { deep: true },
+)
 const live2dAutoBlinkEnabled = useVersionedLocalStorageManualReset<boolean>('settings/live2d/auto-blink-enabled', true, {
   defaultVersion: '2.0.0',
   satisfiesVersionBy(beforeVersion, afterVersion) {
@@ -37,6 +62,10 @@ function resetState() {
   live2dModelEyeOffset.reset()
   live2dIdleAnimationEnabled.reset()
   live2dForceIdleEyeAnimation.reset()
+  live2dIdleMotionFrequency.reset()
+  live2dIdleHeadMotionFrequency.reset()
+  live2dIdleBodyMotionTuning.reset()
+  live2dIdleHeadMotionTuning.reset()
   live2dAutoBlinkEnabled.reset()
   live2dForceAutoBlinkEnabled.reset()
   live2dExpressionEnabled.reset()
@@ -51,6 +80,10 @@ export const useSettingsLive2d = defineStore('settings-live2d', () => {
     live2dModelEyeOffset,
     live2dIdleAnimationEnabled,
     live2dForceIdleEyeAnimation,
+    live2dIdleMotionFrequency,
+    live2dIdleHeadMotionFrequency,
+    live2dIdleBodyMotionTuning,
+    live2dIdleHeadMotionTuning,
     live2dAutoBlinkEnabled,
     live2dForceAutoBlinkEnabled,
     live2dExpressionEnabled,

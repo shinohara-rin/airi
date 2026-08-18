@@ -7,6 +7,7 @@ import {
   useMotionUpdatePluginAutoEyeBlink,
   useMotionUpdatePluginBodyTilt,
   useMotionUpdatePluginIdleDisable,
+  useMotionUpdatePluginIdleMouseMotion,
 } from './motion-manager'
 
 vi.mock('./animation', () => ({
@@ -50,6 +51,9 @@ function createContext(overrides: Partial<MotionManagerPluginContext> = {}): Mot
     modelParameters: ref({
       leftEyeOpen: 1,
       rightEyeOpen: 1,
+      bodyAngleX: 1,
+      bodyAngleY: 2,
+      bodyAngleZ: 3,
     }),
     live2dEyeTrackingEnabled: ref(false),
     live2dEyeFocusSourceActive: ref(false),
@@ -104,31 +108,75 @@ describe('live2d motion manager plugins', () => {
 
   it('adds the mouse X offset to body tilt while tracking is active', () => {
     const context = createContext({
-      modelParameters: ref({ bodyAngleZ: 3 }),
+      modelParameters: ref({ bodyAngleX: 1, bodyAngleY: 2, bodyAngleZ: 3 }),
       live2dEyeTrackingEnabled: ref(true),
       live2dEyeFocusSourceActive: ref(true),
     })
     const mouseOffset = ref({ x: -10, y: 16 })
+    const idleMouseOffset = ref({ x: 0, y: 0 })
 
-    useMotionUpdatePluginBodyTilt(mouseOffset)(context)
+    useMotionUpdatePluginBodyTilt(mouseOffset, idleMouseOffset)(context)
 
+    expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleX', -4)
+    expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleY', 10)
     expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleZ', -17)
   })
 
   it('restores the stored body tilt when tracking is inactive', () => {
     const context = createContext({
-      modelParameters: ref({ bodyAngleZ: 3 }),
+      modelParameters: ref({ bodyAngleX: 1, bodyAngleY: 2, bodyAngleZ: 3 }),
       live2dEyeTrackingEnabled: ref(true),
       live2dEyeFocusSourceActive: ref(true),
     })
     const mouseOffset = ref({ x: -10, y: 16 })
-    const plugin = useMotionUpdatePluginBodyTilt(mouseOffset)
+    const idleMouseOffset = ref({ x: 0, y: 0 })
+    const plugin = useMotionUpdatePluginBodyTilt(mouseOffset, idleMouseOffset)
 
     plugin(context)
     context.live2dEyeFocusSourceActive.value = false
     plugin(context)
 
+    expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleX', 1)
+    expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleY', 2)
     expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleZ', 3)
+  })
+
+  it('updates procedural mouse motion during idle tracking', () => {
+    const context = createContext({
+      live2dForceIdleEyeAnimation: ref(true),
+      live2dEyeTrackingEnabled: ref(false),
+    })
+    const idleMouseMotion = {
+      offset: ref({ x: 0, y: 0 }),
+      direction: ref({ x: 0, y: 0 }),
+      update: vi.fn(),
+      reset: vi.fn(),
+    }
+
+    useMotionUpdatePluginIdleMouseMotion(idleMouseMotion, ref({ x: 0, y: 0 }))(context)
+
+    expect(idleMouseMotion.update).toHaveBeenCalledWith(context.now, context.timeDelta)
+    expect(idleMouseMotion.reset).not.toHaveBeenCalled()
+  })
+
+  it('resets procedural mouse motion when external tracking is active', () => {
+    const context = createContext({
+      live2dForceIdleEyeAnimation: ref(true),
+      live2dEyeTrackingEnabled: ref(true),
+      live2dEyeFocusSourceActive: ref(true),
+    })
+    const idleMouseMotion = {
+      offset: ref({ x: 0, y: 0 }),
+      direction: ref({ x: 0, y: 0 }),
+      update: vi.fn(),
+      reset: vi.fn(),
+    }
+
+    useMotionUpdatePluginIdleMouseMotion(idleMouseMotion, ref({ x: -10, y: 16 }))(context)
+
+    expect(idleMouseMotion.reset).toHaveBeenCalled()
+    expect(idleMouseMotion.reset).toHaveBeenCalledWith({ x: -10, y: 16 })
+    expect(idleMouseMotion.update).not.toHaveBeenCalled()
   })
 
   /**

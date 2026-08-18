@@ -169,6 +169,27 @@ live2d:
     force-idle-eye-animation:
       title: Idle eye movement
       description: Randomly look around when there is no active cursor focus.
+    idle-motion-frequency:
+      title: Idle movement frequency
+      description: Adjust how quickly the model's idle look direction wanders.
+    idle-motion-tuning:
+      title: Idle body motion
+      description: Adjust the procedural body movement, including model offset and body tilt.
+      speed-rate: Speed change rate
+      speed-variation: Speed variation
+      spring-stiffness: Spring stiffness
+      spring-damping: Spring damping
+      x-title: Horizontal motion
+      y-title: Vertical motion
+      primary-rate: Primary rate
+      detail-rate: Detail rate
+      chaos-rate: Chaos rate
+      primary-amplitude: Primary amplitude
+      detail-amplitude: Detail amplitude
+      chaos-amplitude: Chaos amplitude
+    idle-head-motion-tuning:
+      title: Idle head and eye motion
+      description: Adjust the procedural head and eye movement independently from the body.
     blink-enable:
       title: Enable blink
       description: Let the model blink.

@@ -46,6 +46,7 @@ describe('useSettingsLive2d', () => {
     const settings = useSettingsLive2d()
 
     expect(settings.live2dForceIdleEyeAnimation).toBe(true)
+    expect(settings.live2dIdleMotionFrequency).toBe(1)
   })
 
   /**

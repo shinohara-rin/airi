@@ -1,17 +1,18 @@
 import type { ComputedRef, MaybeRefOrGetter } from 'vue'
 
+import type { Live2DModelMouseOffset } from './idle-mouse'
+
 import { storeToRefs } from 'pinia'
 import { computed, toValue } from 'vue'
 
 import { useL2dViewControl } from '../../stores'
+import { mapLive2DMouseDisplacementToModelOffset } from './idle-mouse'
 import { useSettingsLive2d } from './live2d'
 
 export interface Live2DEyeFocusSource {
   x: number
   y: number
 }
-
-const live2dModelMouseOffsetRatio = 0.04
 
 /**
  * Maps cursor displacement from the canvas center to a small model offset.
@@ -23,17 +24,14 @@ const live2dModelMouseOffsetRatio = 0.04
 export function getLive2DModelMouseOffset(
   source: Live2DEyeFocusSource | null | undefined,
   canvasRect: Pick<DOMRect, 'left' | 'top' | 'width' | 'height'> | undefined,
-): { x: number, y: number } {
-  if (!source || !canvasRect || canvasRect.width <= 0)
+): Live2DModelMouseOffset {
+  if (!source || !canvasRect || canvasRect.width <= 0 || canvasRect.height <= 0)
     return { x: 0, y: 0 }
 
-  const horizontalOffset = source.x - canvasRect.left - canvasRect.width / 2
-  const verticalOffset = source.y - canvasRect.top - canvasRect.height / 2
-
-  return {
-    x: horizontalOffset === 0 ? 0 : -horizontalOffset * live2dModelMouseOffsetRatio,
-    y: verticalOffset * live2dModelMouseOffsetRatio * 2,
-  }
+  return mapLive2DMouseDisplacementToModelOffset({
+    x: (source.x - canvasRect.left - canvasRect.width / 2) / (canvasRect.width / 2),
+    y: (source.y - canvasRect.top - canvasRect.height / 2) / (canvasRect.height / 2),
+  }, canvasRect)
 }
 
 /**
