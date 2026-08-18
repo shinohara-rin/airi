@@ -520,3 +520,33 @@ export function useMotionUpdatePluginLipSync(
     ctx.model.setParameterValueById('ParamMouthOpenY', blended)
   }
 }
+
+/**
+ * Applies the horizontal mouse offset to the model body tilt.
+ *
+ * The stored body angle remains the base value. Mouse tracking adds a temporary
+ * offset while active, then the plugin restores the stored value.
+ */
+export function useMotionUpdatePluginBodyTilt(
+  mouseOffset: Ref<{ x: number, y: number }>,
+): MotionManagerPlugin {
+  const bodyTiltMouseMultiplier = 2
+  let trackingWasActive = false
+
+  return (ctx) => {
+    const trackingActive = ctx.live2dEyeTrackingEnabled.value && ctx.live2dEyeFocusSourceActive.value
+    if (!trackingActive) {
+      if (trackingWasActive) {
+        ctx.model.setParameterValueById('ParamBodyAngleZ', ctx.modelParameters.value.bodyAngleZ)
+        trackingWasActive = false
+      }
+      return
+    }
+
+    trackingWasActive = true
+    ctx.model.setParameterValueById(
+      'ParamBodyAngleZ',
+      ctx.modelParameters.value.bodyAngleZ + mouseOffset.value.x * bodyTiltMouseMultiplier,
+    )
+  }
+}

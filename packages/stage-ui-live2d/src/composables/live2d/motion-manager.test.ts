@@ -5,6 +5,7 @@ import { ref } from 'vue'
 
 import {
   useMotionUpdatePluginAutoEyeBlink,
+  useMotionUpdatePluginBodyTilt,
   useMotionUpdatePluginIdleDisable,
 } from './motion-manager'
 
@@ -99,6 +100,35 @@ describe('live2d motion manager plugins', () => {
     useMotionUpdatePluginIdleDisable(idleEyeFocus)(context)
 
     expect(idleEyeFocus.update).not.toHaveBeenCalled()
+  })
+
+  it('adds the mouse X offset to body tilt while tracking is active', () => {
+    const context = createContext({
+      modelParameters: ref({ bodyAngleZ: 3 }),
+      live2dEyeTrackingEnabled: ref(true),
+      live2dEyeFocusSourceActive: ref(true),
+    })
+    const mouseOffset = ref({ x: -10, y: 16 })
+
+    useMotionUpdatePluginBodyTilt(mouseOffset)(context)
+
+    expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleZ', -17)
+  })
+
+  it('restores the stored body tilt when tracking is inactive', () => {
+    const context = createContext({
+      modelParameters: ref({ bodyAngleZ: 3 }),
+      live2dEyeTrackingEnabled: ref(true),
+      live2dEyeFocusSourceActive: ref(true),
+    })
+    const mouseOffset = ref({ x: -10, y: 16 })
+    const plugin = useMotionUpdatePluginBodyTilt(mouseOffset)
+
+    plugin(context)
+    context.live2dEyeFocusSourceActive.value = false
+    plugin(context)
+
+    expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleZ', 3)
   })
 
   /**
