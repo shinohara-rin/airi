@@ -1,5 +1,3 @@
-import type {} from 'pinia-plugin-synced'
-
 import { useLocalStorageManualReset } from '@proj-airi/stage-shared/composables'
 import { refManualReset } from '@vueuse/core'
 import { defineStore } from 'pinia'
@@ -119,8 +117,4 @@ export const useConsciousnessStore = defineStore('consciousness', () => {
     getModelsForProvider,
     resetState,
   }
-}, {
-  synced: {
-    state: true,
-  },
 })

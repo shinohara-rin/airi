@@ -44,12 +44,7 @@ export function setupChatWindowReusableFunc(params: {
       i18n: params.i18n,
     })
 
-    await load(window, withHashRoute(baseUrl(resolve(getElectronMainDirname(), '..', 'renderer')), '/chat', {
-      query: {
-        'stage-runtime': 'minimal',
-        'synced-leader': 'false',
-      },
-    }))
+    await load(window, withHashRoute(baseUrl(resolve(getElectronMainDirname(), '..', 'renderer')), '/chat'))
 
     return window
   }).getWindow

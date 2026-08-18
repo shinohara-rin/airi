@@ -2,7 +2,6 @@ import type { Span } from '@opentelemetry/api'
 import type { TranscriptionProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 import type { WithUnknown } from '@xsai/shared'
 import type { StreamTranscriptionOptions as XSAIStreamTranscriptionOptions } from '@xsai/stream-transcription'
-import type {} from 'pinia-plugin-synced'
 
 import type { AIRIStreamTranscriptionResult } from '../../libs/providers/stream-transcription'
 import type { StreamingTranscriptionCallbacks, StreamingTranscriptionConsumer } from './streaming-transcription-consumers'
@@ -562,10 +561,6 @@ export const useHearingStore = defineStore('hearing-store', () => {
     getModelsForProvider,
     resetState,
   }
-}, {
-  synced: {
-    state: true,
-  },
 })
 
 export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech:audio-input-pipeline', () => {

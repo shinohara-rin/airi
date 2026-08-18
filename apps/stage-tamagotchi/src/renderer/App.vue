@@ -62,7 +62,7 @@ import {
   useTamagotchiMcpToolsStore,
   useTamagotchiPluginToolsStore,
 } from './stores/tools'
-import { resolveInitialRendererRoutePath, resolveRendererWindowContext } from './window-context'
+import { resolveInitialWindowRoutePath } from './window-route'
 
 const { isDark: dark } = useTheme()
 const settingsStore = useSettings()
@@ -73,17 +73,20 @@ const chatSessionStore = useChatSessionStore()
 const context = useElectronEventaContext()
 const getMainLocale = useElectronEventaInvoke(i18nGetLocale)
 const setLocale = useElectronEventaInvoke(i18nSetLocale)
-const windowContext = resolveRendererWindowContext()
-const initialRoutePath = resolveInitialRendererRoutePath(route.path)
+const initialWindowRoutePath = resolveInitialWindowRoutePath(route.path)
 useChatStore()
 const builtinToolsStore = useTamagotchiBuiltinToolsStore()
 const mcpToolsStore = useTamagotchiMcpToolsStore()
 const pluginToolsStore = useTamagotchiPluginToolsStore()
 const syncedPinia = usePiniaSynced()
 chatSessionStore.setCloudSyncOwnership(syncedPinia.isLeader())
-const isSpotlightWindow = initialRoutePath === '/spotlight'
-const isSettingsWindow = initialRoutePath === '/settings' || initialRoutePath.startsWith('/settings/')
+const isSpotlightWindowRoute = initialWindowRoutePath === '/spotlight'
+const isSettingsWindowRoute = initialWindowRoutePath === '/settings' || initialWindowRoutePath.startsWith('/settings/')
+const isEditorWindowRoute = initialWindowRoutePath === '/editor'
 
+// Every renderer participates in leader election. Keep provider state ready in
+// auxiliary windows so a newly elected leader can execute chat actions after
+// the previous window closes.
 useAuthProviderSync()
 
 async function refreshPluginRuntimeTools() {
@@ -95,8 +98,8 @@ async function refreshPluginRuntimeTools() {
   }
 }
 
-// Every renderer creates the runtime tool stores for synchronized state. Only
-// the main Stage renderer discovers tools and keeps executors.
+// Every renderer creates the runtime tool stores because every renderer can
+// become the leader. Only the leader discovers tools and keeps executors.
 const stopLeadershipListener = syncedPinia.onLeadershipChange((isLeader) => {
   chatSessionStore.setCloudSyncOwnership(isLeader)
   if (!isLeader)
@@ -136,8 +139,9 @@ function createFullStageRuntime() {
   const reportPluginCapability = useElectronEventaInvoke(electronPluginUpdateCapability)
   const getGodotStageStatus = useElectronEventaInvoke(electronGodotStageGetStatus)
   const syncArtistryConfig = useElectronEventaInvoke(artistrySyncConfig)
-  const usesGodotStage = initialRoutePath === '/' || initialRoutePath.startsWith('/settings')
-  const isWidgetsWindow = initialRoutePath === '/widgets'
+  const isAuxiliaryChatRoute = initialWindowRoutePath === '/chat'
+  const isGodotStageRoute = () => route.path === '/' || route.path.startsWith('/settings')
+  const isWidgetsWindowRoute = () => route.path === '/widgets'
 
   function syncGodotStageRenderer(state: { state: 'stopped' | 'starting' | 'running' | 'stopping' | 'error' }) {
     if (state.state === 'running') {
@@ -151,13 +155,12 @@ function createFullStageRuntime() {
 
   usePerfTracerBridgeStore()
   initializeStageThreeRuntimeTraceBridge()
-  // The main process returns the callback only to the renderer that started
-  // sign-in. Each login-capable window listens locally, while the synchronized
-  // auth action still executes once in the main Stage leader.
   initializeElectronAuthCallbackBridge()
   void stageWindowLifecycleStore.initializeWindowLifecycleBridge()
 
-  contextBridgeStore.setSparkNotifyHostRole(isWidgetsWindow ? 'client' : 'main')
+  watch(() => route.path, () => {
+    contextBridgeStore.setSparkNotifyHostRole(isWidgetsWindowRoute() ? 'client' : 'main')
+  }, { immediate: true })
 
   // NOTICE: register plugin host bridge during setup to avoid race with pages using it in immediate watchers.
   pluginHostInspectorStore.setBridge({
@@ -214,14 +217,13 @@ function createFullStageRuntime() {
     async initialize() {
       initializeAnalytics()
       await displayModelsStore.initialize()
-      cardStore.startRuntime(syncedPinia)
-      await cardStore.initialize()
+      cardStore.initialize()
 
       await displayModelsStore.loadDisplayModelsFromIndexedDB()
       await settingsStore.initializeStageModel()
       await settingsAudioDeviceStore.initialize()
 
-      if (usesGodotStage) {
+      if (isGodotStageRoute()) {
         try {
           syncGodotStageRenderer(await getGodotStageStatus())
         }
@@ -239,10 +241,12 @@ function createFullStageRuntime() {
         token: serverChannelConfig.authToken || undefined,
         possibleEvents: ['ui:configure'],
       }).catch(err => console.error('Failed to initialize Mods Server Channel in App.vue:', err))
-      contextBridgeStore.initialize()
-      if (!isWidgetsWindow) {
-        characterOrchestratorStore.initialize()
-        await startTrackingCursorPoint()
+      if (!isAuxiliaryChatRoute) {
+        contextBridgeStore.initialize()
+        if (!isWidgetsWindowRoute()) {
+          characterOrchestratorStore.initialize()
+          await startTrackingCursorPoint()
+        }
       }
 
       defineInvokeHandler(context.value, pluginProtocolListProviders, async () => listProvidersForPluginHost())
@@ -260,15 +264,13 @@ function createFullStageRuntime() {
       inferencePreload.triggerPreload()
     },
     dispose() {
-      cardStore.disposeRuntime()
-      contextBridgeStore.dispose()
+      if (!isAuxiliaryChatRoute)
+        contextBridgeStore.dispose()
     },
   }
 }
 
-const fullStageRuntime = windowContext.stageRuntime === 'full'
-  ? createFullStageRuntime()
-  : null
+const fullStageRuntime = isSpotlightWindowRoute || isEditorWindowRoute ? null : createFullStageRuntime()
 
 const { restore: restoreLocale } = useLanguage(language, getMainLocale, setLocale)
 
@@ -277,7 +279,7 @@ watch(dark, () => updateThemeColor(), { immediate: true })
 watch(route, () => updateThemeColor(), { immediate: true })
 onMounted(() => updateThemeColor())
 
-if (isSettingsWindow) {
+if (isSettingsWindowRoute) {
   context.value.on(electronSettingsNavigate, (event) => {
     const targetRoute = event?.body?.route
     if (!targetRoute || route.fullPath === targetRoute) {
@@ -322,7 +324,7 @@ onUnmounted(() => {
   <ToasterRoot @close="id => toast.dismiss(id)">
     <Toaster />
   </ToasterRoot>
-  <ResizeHandler v-if="!isSpotlightWindow" />
+  <ResizeHandler v-if="!isSpotlightWindowRoute" />
   <RouterView />
 </template>
 

@@ -1,5 +1,3 @@
-import type {} from 'pinia-plugin-synced'
-
 import { useLocalStorageManualReset } from '@proj-airi/stage-shared/composables'
 import { defineStore } from 'pinia'
 import { computed, isRef, ref, watch } from 'vue'
@@ -186,10 +184,6 @@ export const useArtistryStore = defineStore('artistry', () => {
     resetToGlobal,
     resetState,
   }
-}, {
-  synced: {
-    state: true,
-  },
 })
 
 /**

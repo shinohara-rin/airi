@@ -140,12 +140,7 @@ export function setupSpotlightWindowManager(params: {
       showNotification(payload.body, () => void openChatWindowFromNotification())
     })
 
-    await load(window, withHashRoute(rendererBase, '/spotlight', {
-      query: {
-        'stage-runtime': 'minimal',
-        'synced-leader': 'false',
-      },
-    }))
+    await load(window, withHashRoute(rendererBase, '/spotlight'))
 
     return window
   })

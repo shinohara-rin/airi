@@ -55,12 +55,7 @@ export function setupEditorWindowManager(params: {
       i18n: params.i18n,
       serverChannel: params.serverChannel,
     })
-    await load(window, withHashRoute(rendererBase, '/editor', {
-      query: {
-        'stage-runtime': 'minimal',
-        'synced-leader': 'false',
-      },
-    }))
+    await load(window, withHashRoute(rendererBase, '/editor'))
 
     return window
   })

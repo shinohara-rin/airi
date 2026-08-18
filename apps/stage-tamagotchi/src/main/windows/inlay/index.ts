@@ -66,9 +66,7 @@ export async function setupInlayWindow(params: {
 
   await setupInlayWindowInvokes({ inlayWindow: window, serverChannel: params.serverChannel, i18n: params.i18n })
 
-  await load(window, withHashRoute(baseUrl(resolve(getElectronMainDirname(), '..', 'renderer')), '/inlay', {
-    query: { 'synced-leader': 'false' },
-  }))
+  await load(window, withHashRoute(baseUrl(resolve(getElectronMainDirname(), '..', 'renderer')), '/inlay'))
 
   return window
 }

@@ -123,7 +123,6 @@ export async function setupDesktopOverlayWindow(params: {
       isDesktopOverlayPollHeartbeatEnabled()
         ? `/desktop-overlay?${desktopOverlayPollHeartbeatQueryParam}=1`
         : '/desktop-overlay',
-      { query: { 'synced-leader': 'false' } },
     ),
   )
 

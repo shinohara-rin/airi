@@ -38,39 +38,15 @@ const STREAMING_SPEECH_PROVIDER_ID = 'official-provider-speech-streaming'
  * auxiliary windows do not depend on the transient Stage scene lifecycle.
  */
 export function useAuthProviderSync() {
-  const syncedPinia = usePiniaSynced()
-  let leaderSyncInitialized = false
-  let disposeAuthenticatedProviderSync: (() => void) | undefined
+  void initializeAuth()
 
-  function initializeLeaderSync() {
-    if (!syncedPinia.isLeader() || leaderSyncInitialized)
-      return
-
-    leaderSyncInitialized = true
-    void initializeAuth()
-    disposeAuthenticatedProviderSync = setupAuthenticatedProviderSync()
-  }
-
-  function disposeLeaderSync() {
-    if (!leaderSyncInitialized)
-      return
-
-    disposeAuthenticatedProviderSync?.()
-    disposeAuthenticatedProviderSync = undefined
-    leaderSyncInitialized = false
-  }
-
-  syncedPinia.onLeadershipChange((isLeader) => {
+  // A replacement leader has no active refresh timer. Restore the auth
+  // lifecycle when this renderer acquires leadership after another closes.
+  usePiniaSynced().onLeadershipChange((isLeader) => {
     if (isLeader)
-      initializeLeaderSync()
-    else
-      disposeLeaderSync()
+      void initializeAuth()
   })
 
-  initializeLeaderSync()
-}
-
-function setupAuthenticatedProviderSync() {
   const authStore = useAuthStore()
   const providersStore = useProviderStore()
   const consciousnessStore = useConsciousnessStore()
@@ -86,7 +62,7 @@ function setupAuthenticatedProviderSync() {
   let authGeneration = 0
   let syncInFlight: Promise<void> | undefined
 
-  const stopAuthenticatedHook = authStore.onAuthenticated(async () => {
+  authStore.onAuthenticated(async () => {
     if (hasSynced)
       return
 
@@ -226,7 +202,7 @@ function setupAuthenticatedProviderSync() {
     speechStore.activeSpeechVoiceId = ''
   }
 
-  const stopLogoutHook = authStore.onLogout(() => {
+  authStore.onLogout(() => {
     authGeneration++
     hasSynced = false
 
@@ -273,10 +249,4 @@ function setupAuthenticatedProviderSync() {
       }
     }
   })
-
-  return () => {
-    authGeneration++
-    stopAuthenticatedHook()
-    stopLogoutHook()
-  }
 }

@@ -47,9 +47,7 @@ export function setupNoticeWindowManager(params: {
 
   async function loadNoticeRoute(window: BrowserWindow, payload: RequestWindowPayload & { id: string }) {
     const routeWithId = `${payload.route}?id=${payload.id}`
-    await load(window, withHashRoute(rendererBase, routeWithId, {
-      query: { 'synced-leader': 'false' },
-    }))
+    await load(window, withHashRoute(rendererBase, routeWithId))
   }
 
   const manager = createReferencedWindowManager({

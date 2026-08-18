@@ -11,7 +11,7 @@ import type {
 import type {} from 'pinia-plugin-synced'
 
 import type { ProviderMetadata, ProviderValidationPlan } from '../../libs/providers'
-import type { ModelInfo, ProviderDefinition, ProviderInstance, VoiceInfo } from '../../libs/providers/types'
+import type { ModelInfo, ProviderDefinition, ProviderInstance } from '../../libs/providers/types'
 
 import { errorMessageFrom } from '@moeru/std'
 import { isCustomProvidersDisabled } from '@proj-airi/stage-shared'
@@ -128,7 +128,6 @@ export const useProviderStore = defineStore('provider', () => {
     set: value => providerStateStore.runtime = value,
   })
   const providerValidationInFlight = new Map<string, Promise<boolean>>()
-  const providerVoiceListInFlight = new Map<string, Promise<VoiceInfo[]>>()
   const providerRevalidationLoops = new Map<string, { pause: () => void, resume: () => void }>()
 
   // Server-driven availability overrides for providers whose visibility can
@@ -537,25 +536,13 @@ export const useProviderStore = defineStore('provider', () => {
       return []
 
     const config = providerConfigStore.getProviderConfig(providerId) ?? {}
-    const requestKey = JSON.stringify([providerId, model ?? null, config])
-    const pending = providerVoiceListInFlight.get(requestKey)
-    if (pending)
-      return pending
-
-    const task = (async () => {
-      const provider = await definition.createProvider(config)
-      try {
-        return await listVoices(config, provider, model)
-      }
-      finally {
-        await disposeTemporaryProvider(provider)
-      }
-    })()
-    providerVoiceListInFlight.set(requestKey, task)
-
-    return task.finally(() => {
-      providerVoiceListInFlight.delete(requestKey)
-    })
+    const provider = await definition.createProvider(config)
+    try {
+      return await listVoices(config, provider, model)
+    }
+    finally {
+      await disposeTemporaryProvider(provider)
+    }
   }
 
   async function loadProviderModel(

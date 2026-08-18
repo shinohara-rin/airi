@@ -89,8 +89,7 @@ watch(settings.themeColorsHueDynamic, () => {
 onMounted(async () => {
   initializeAnalytics()
   await displayModelsStore.initialize()
-  cardStore.startRuntime(syncedPinia)
-  await cardStore.initialize()
+  cardStore.initialize()
 
   if (onboardingStore.needsOnboarding) {
     onboardingStore.showingSetup = true
@@ -111,7 +110,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopLeadershipListener()
-  cardStore.disposeRuntime()
   contextBridgeStore.dispose()
 })
 

@@ -50,9 +50,7 @@ export function setupDevtoolsWindow(): DevtoolsWindowManager {
       })
       protectPrivilegedWindowNavigation(window)
 
-      await load(window, withHashRoute(rendererBase, route, {
-        query: { 'synced-leader': 'false' },
-      }))
+      await load(window, withHashRoute(rendererBase, route))
       return window
     })
 
