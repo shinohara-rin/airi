@@ -536,15 +536,42 @@ export function useMotionUpdatePluginBodyTilt(
   const bodyAngleYMouseMultiplier = 0.5
   const bodyTiltMouseMultiplier = 2
   let trackingWasActive = false
+  let queuedBodyAngles: { x: number, y: number, z: number } | undefined
+  let restoreQueued = false
+  let beforeModelUpdateRegistered = false
 
   return (ctx) => {
+    if (!beforeModelUpdateRegistered) {
+      // NOTICE:
+      // Some models apply physics outputs to ParamBodyAngleX/Y/Z after the motion manager runs.
+      // Applying these values here would be overwritten before Cubism updates the drawable vertices.
+      // Pixi's beforeModelUpdate event runs after physics and immediately before the Core update.
+      ctx.internalModel.on('beforeModelUpdate', () => {
+        if (!queuedBodyAngles)
+          return
+
+        ctx.model.setParameterValueById('ParamBodyAngleX', queuedBodyAngles.x)
+        ctx.model.setParameterValueById('ParamBodyAngleY', queuedBodyAngles.y)
+        ctx.model.setParameterValueById('ParamBodyAngleZ', queuedBodyAngles.z)
+
+        if (restoreQueued) {
+          queuedBodyAngles = undefined
+          restoreQueued = false
+        }
+      })
+      beforeModelUpdateRegistered = true
+    }
+
     const externalTrackingActive = ctx.live2dEyeTrackingEnabled.value && ctx.live2dEyeFocusSourceActive.value
     const idleTrackingActive = ctx.isIdleMotion && ctx.live2dForceIdleEyeAnimation.value && !externalTrackingActive
     if (!externalTrackingActive && !idleTrackingActive) {
       if (trackingWasActive) {
-        ctx.model.setParameterValueById('ParamBodyAngleX', ctx.modelParameters.value.bodyAngleX)
-        ctx.model.setParameterValueById('ParamBodyAngleY', ctx.modelParameters.value.bodyAngleY)
-        ctx.model.setParameterValueById('ParamBodyAngleZ', ctx.modelParameters.value.bodyAngleZ)
+        queuedBodyAngles = {
+          x: ctx.modelParameters.value.bodyAngleX,
+          y: ctx.modelParameters.value.bodyAngleY,
+          z: ctx.modelParameters.value.bodyAngleZ,
+        }
+        restoreQueued = true
         trackingWasActive = false
       }
       return
@@ -552,19 +579,12 @@ export function useMotionUpdatePluginBodyTilt(
 
     trackingWasActive = true
     const offset = externalTrackingActive ? mouseOffset.value : idleMouseOffset.value
-    ctx.model.setParameterValueById(
-      'ParamBodyAngleX',
-      ctx.modelParameters.value.bodyAngleX + offset.x * bodyAngleXMouseMultiplier,
-    )
-    ctx.model.setParameterValueById(
-      'ParamBodyAngleY',
-      ctx.modelParameters.value.bodyAngleY + offset.y * bodyAngleYMouseMultiplier,
-    )
-    ctx.model.setParameterValueById(
-      'ParamBodyAngleZ',
-      ctx.modelParameters.value.bodyAngleZ
-      + offset.x * bodyTiltMouseMultiplier,
-    )
+    queuedBodyAngles = {
+      x: ctx.modelParameters.value.bodyAngleX + offset.x * bodyAngleXMouseMultiplier,
+      y: ctx.modelParameters.value.bodyAngleY + offset.y * bodyAngleYMouseMultiplier,
+      z: ctx.modelParameters.value.bodyAngleZ + offset.x * bodyTiltMouseMultiplier,
+    }
+    restoreQueued = false
   }
 }
 

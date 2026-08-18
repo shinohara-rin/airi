@@ -25,11 +25,16 @@ function createModel(initialValues: Record<string, number> = {}) {
   }
 }
 
-function createContext(overrides: Partial<MotionManagerPluginContext> = {}): MotionManagerPluginContext {
+type TestMotionManagerPluginContext = MotionManagerPluginContext & {
+  beforeModelUpdateListeners: Array<() => void>
+}
+
+function createContext(overrides: Partial<MotionManagerPluginContext> = {}): TestMotionManagerPluginContext {
   const model = createModel({
     ParamEyeLOpen: 1,
     ParamEyeROpen: 1,
   })
+  const beforeModelUpdateListeners: Array<() => void> = []
   const context = {
     model,
     now: 1000,
@@ -42,7 +47,11 @@ function createContext(overrides: Partial<MotionManagerPluginContext> = {}): Mot
         }),
       },
       coreModel: model,
+      on: vi.fn((_event: string, listener: () => void) => {
+        beforeModelUpdateListeners.push(listener)
+      }),
     } as unknown as PixiLive2DInternalModel,
+    beforeModelUpdateListeners,
     motionManager: {
       stopAllMotions: vi.fn(),
       state: { currentGroup: undefined },
@@ -68,7 +77,7 @@ function createContext(overrides: Partial<MotionManagerPluginContext> = {}): Mot
     }),
   }
 
-  return Object.assign(context, overrides) as unknown as MotionManagerPluginContext
+  return Object.assign(context, overrides) as unknown as TestMotionManagerPluginContext
 }
 
 describe('live2d motion manager plugins', () => {
@@ -115,7 +124,9 @@ describe('live2d motion manager plugins', () => {
     const mouseOffset = ref({ x: -10, y: 16 })
     const idleMouseOffset = ref({ x: 0, y: 0 })
 
-    useMotionUpdatePluginBodyTilt(mouseOffset, idleMouseOffset)(context)
+    const plugin = useMotionUpdatePluginBodyTilt(mouseOffset, idleMouseOffset)
+    plugin(context)
+    context.beforeModelUpdateListeners.forEach(listener => listener())
 
     expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleX', -4)
     expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleY', 10)
@@ -135,10 +146,30 @@ describe('live2d motion manager plugins', () => {
     plugin(context)
     context.live2dEyeFocusSourceActive.value = false
     plugin(context)
+    context.beforeModelUpdateListeners.forEach(listener => listener())
 
     expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleX', 1)
     expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleY', 2)
     expect(context.model.setParameterValueById).toHaveBeenCalledWith('ParamBodyAngleZ', 3)
+  })
+
+  it('reapplies body tilt after model physics overwrites body angles', () => {
+    const context = createContext({
+      modelParameters: ref({ bodyAngleX: 1, bodyAngleY: 2, bodyAngleZ: 3 }),
+      live2dEyeTrackingEnabled: ref(true),
+      live2dEyeFocusSourceActive: ref(true),
+    })
+    const mouseOffset = ref({ x: -10, y: 16 })
+    const idleMouseOffset = ref({ x: 0, y: 0 })
+    const plugin = useMotionUpdatePluginBodyTilt(mouseOffset, idleMouseOffset)
+
+    plugin(context)
+    context.model.setParameterValueById('ParamBodyAngleX', 0)
+    context.model.setParameterValueById('ParamBodyAngleY', 0)
+    context.model.setParameterValueById('ParamBodyAngleZ', 0)
+    context.beforeModelUpdateListeners.forEach(listener => listener())
+
+    expect(context.model.setParameterValueById).toHaveBeenLastCalledWith('ParamBodyAngleZ', -17)
   })
 
   it('updates procedural mouse motion during idle tracking', () => {
