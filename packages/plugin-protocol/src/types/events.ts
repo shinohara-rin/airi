@@ -618,6 +618,11 @@ export type WebSocketEventInputVoice = WebSocketEventInputVoiceBase & Partial<Wi
 
 export type InputEventData = WebSocketEventInputText | WebSocketEventInputTextVoice | WebSocketEventInputVoice
 
+/** Speak literal text through the stage's speech pipeline without an LLM turn. */
+export interface OutputSpeechEvent {
+  text: string
+}
+
 export type InputEventEnvelope
   = | { type: 'input:text', data: WebSocketEventInputText }
     | { type: 'input:text:voice', data: WebSocketEventInputTextVoice }
@@ -1271,6 +1276,16 @@ export const outputGenAiChatToolCall = defineProtocolEventa<OutputGenAiChatToolC
 export const outputGenAiChatMessage = defineProtocolEventa<OutputGenAiChatMessageEvent>('output:gen-ai:chat:message')
 export const outputGenAiChatComplete = defineProtocolEventa<OutputGenAiChatCompleteEvent>('output:gen-ai:chat:complete')
 
+export const outputSpeech = defineProtocolEventa<OutputSpeechEvent>('output:speech', {
+  metadata: {
+    delivery: {
+      mode: 'consumer-group',
+      group: 'speech-output',
+      selection: 'first',
+    },
+  },
+})
+
 export const sparkNotify = defineProtocolEventa<SparkNotifyEvent>('spark:notify')
 export const sparkEmit = defineProtocolEventa<SparkEmitEvent>('spark:emit')
 export const sparkCommand = defineProtocolEventa<SparkCommandEvent>('spark:command')
@@ -1282,6 +1297,7 @@ export const protocolEventMetadataByType = {
   [inputText.id]: inputText.metadata,
   [inputTextVoice.id]: inputTextVoice.metadata,
   [inputVoice.id]: inputVoice.metadata,
+  [outputSpeech.id]: outputSpeech.metadata,
 } satisfies Partial<Record<keyof ProtocolEvents, ProtocolEventaMetadata | undefined>>
 
 export function getProtocolEventMetadata(eventType: keyof ProtocolEvents | string) {
@@ -1457,6 +1473,7 @@ export interface ProtocolEvents<C = undefined> {
   'output:gen-ai:chat:tool-call': OutputGenAiChatToolCallEvent
   'output:gen-ai:chat:message': OutputGenAiChatMessageEvent
   'output:gen-ai:chat:complete': OutputGenAiChatCompleteEvent
+  'output:speech': OutputSpeechEvent
 
   /**
    * Spark used for allowing agents in a network to raise an event toward the other destinations (e.g. character).

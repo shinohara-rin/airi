@@ -40,6 +40,25 @@ Useful runtime helpers:
 - `client.sendOrThrow()` is available when you want strict delivery semantics
 - `client.onEvent()` returns an unsubscribe function
 
+## Speak through Tamagotchi without an LLM
+
+Connect to Tamagotchi's server with the token from **Settings → Connection**.
+Then send literal text through the shared `plugin-protocol` event:
+
+```typescript
+client.send({
+  type: 'output:speech',
+  data: { text: 'Found 16 logs' },
+})
+```
+
+Keep Tamagotchi's stage open with a configured speech provider and voice.
+Use a non-streaming speech provider for this first version; the separate bidirectional streaming transport is not supported.
+The stage queues the text in its existing speech pipeline, which drives audio and avatar lip sync.
+This event does not enter chat history or call the chat model.
+The server selects one registered speech host, so multiple windows do not repeat the line.
+There is no playback acknowledgement or offline replay.
+
 ## License
 
 [MIT](../../LICENSE)

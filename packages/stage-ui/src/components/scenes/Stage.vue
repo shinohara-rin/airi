@@ -1001,6 +1001,7 @@ async function captureCharacterFrame() {
 }
 
 onUnmounted(() => {
+  void speechRuntimeStore.dispose()
   disposePlaybackStateHandler()
   resetLive2dLipSync()
   chatHookCleanups.forEach(dispose => dispose?.())
