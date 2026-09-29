@@ -198,9 +198,11 @@ export const useModsServerChannelStore = defineStore('mods:channels:proj-airi:se
           const isReconnect = hasEverConnected.value
 
           hasEverConnected.value = true
+          // SDK send() accepts business events only after the full handshake.
           connected.value = true
           flush()
           initializeListeners()
+          resolve()
 
           if (isReconnect) {
             for (const callback of reconnectedCallbacks) {
@@ -223,20 +225,8 @@ export const useModsServerChannelStore = defineStore('mods:channels:proj-airi:se
         if (attempt !== connectionAttempt)
           return
 
-        if (event.data.authenticated) {
-          if (!hasEverConnected.value) {
-            // First connection can flush immediately after authentication.
-            connected.value = true
-            flush()
-            initializeListeners()
-          }
-          // On reconnect, wait for onReady (after announce) before flushing business events.
-          resolve()
-
-          return
-        }
-
-        connected.value = false
+        if (!event.data.authenticated)
+          connected.value = false
       })
     })
   }

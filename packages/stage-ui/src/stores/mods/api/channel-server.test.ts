@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { nextTick, watch } from 'vue'
 
 const serverSdkMocks = vi.hoisted(() => {
   class MockClient {
@@ -129,6 +129,49 @@ describe('channel-server store reconnect', () => {
     vi.clearAllMocks()
   })
 
+  // ROOT CAUSE: authentication precedes SDK readiness. Publishing connected
+  // during authentication sent speech registration while SDK send() rejected it.
+  it('registers a speech consumer only after the initial and replacement sockets are ready', async () => {
+    const store = useModsServerChannelStore()
+    const registration = {
+      type: 'module:consumer:register',
+      data: { event: 'output:speech', mode: 'consumer-group', group: 'speech-output' },
+    } as const
+    const stop = watch(() => store.connected, (connected) => {
+      if (connected)
+        store.send(registration)
+    }, { flush: 'sync' })
+
+    for (const token of ['initial-secret', 'replacement-secret']) {
+      const initialized = store.initialize({ token })
+      const client = serverSdkMocks.MockClient.instances.at(-1)!
+      let ready = false
+      const send = vi.spyOn(client, 'send').mockImplementation((event) => {
+        if (!ready)
+          return false
+        client.sent.push(event)
+        return true
+      })
+      const resolved = vi.fn()
+      void initialized.then(resolved)
+
+      client.simulateAuthenticated()
+      await nextTick()
+      expect(store.connected).toBe(false)
+      expect(send).not.toHaveBeenCalled()
+      expect(resolved).not.toHaveBeenCalled()
+
+      ready = true
+      client.simulateReconnectReady()
+      await initialized
+      expect(client.sent).toEqual([registration])
+      expect(store.connected).toBe(true)
+    }
+
+    stop()
+    store.dispose()
+  })
+
   // Regression coverage for https://github.com/moeru-ai/airi/issues/1545
   it('issue #1545: restores connected state and flushes queued sends when the client reports ready after a reconnect', async () => {
     const store = useModsServerChannelStore()
@@ -142,6 +185,7 @@ describe('channel-server store reconnect', () => {
     const client = serverSdkMocks.MockClient.instances.at(-1)!
 
     client.simulateAuthenticated()
+    client.simulateReconnectReady()
     await initializePromise
 
     expect(store.connected).toBe(true)
@@ -183,6 +227,7 @@ describe('channel-server store reconnect', () => {
     const client = serverSdkMocks.MockClient.instances[0]
 
     client.simulateAuthenticated()
+    client.simulateReconnectReady()
     await initializePromise
 
     expect(client.options.heartbeat).toEqual({
@@ -200,10 +245,10 @@ describe('channel-server store reconnect', () => {
     const client = serverSdkMocks.MockClient.instances[0]
 
     client.simulateAuthenticated()
+    client.simulateReconnectReady()
     await initializePromise
 
     client.simulateTransientDisconnect()
-    client.simulateReconnectReady()
     client.simulateReconnectReady()
 
     expect(onReconnected).toHaveBeenCalledTimes(1)
@@ -241,10 +286,10 @@ describe('channel-server store reconnect', () => {
     const client = serverSdkMocks.MockClient.instances[0]
 
     client.simulateAuthenticated()
+    client.simulateReconnectReady()
     await initializePromise
 
     client.simulateTransientDisconnect()
-    client.simulateReconnectReady()
     client.simulateReconnectReady()
 
     expect(successfulCallback).toHaveBeenCalledTimes(1)
@@ -268,6 +313,7 @@ describe('channel-server store reconnect', () => {
     expect(secondClient).toBeDefined()
 
     secondClient.simulateAuthenticated()
+    secondClient.simulateReconnectReady()
     await secondInitializePromise
 
     expect(store.connected).toBe(true)
@@ -295,6 +341,7 @@ describe('channel-server store reconnect', () => {
     expect(authenticatedClient.options.token).toBe('secret')
 
     authenticatedClient.simulateAuthenticated()
+    authenticatedClient.simulateReconnectReady()
     await authenticatedInitialize
 
     expect(store.connected).toBe(true)
@@ -307,6 +354,7 @@ describe('channel-server store reconnect', () => {
     const firstClient = serverSdkMocks.MockClient.instances[0]
 
     firstClient.simulateAuthenticated()
+    firstClient.simulateReconnectReady()
     await firstInitializePromise
 
     firstClient.simulateStateChange('reconnecting', 'failed')
@@ -318,6 +366,7 @@ describe('channel-server store reconnect', () => {
     expect(secondClient).toBeDefined()
 
     secondClient.simulateAuthenticated()
+    secondClient.simulateReconnectReady()
     await secondInitializePromise
 
     expect(store.connected).toBe(true)
@@ -348,8 +397,8 @@ describe('channel-server store reconnect', () => {
     const client = serverSdkMocks.MockClient.instances[0]
 
     client.simulateAuthenticated()
-    await initializePromise
     client.simulateReconnectReady()
+    await initializePromise
 
     client.simulateTransientDisconnect()
 
@@ -384,6 +433,7 @@ describe('channel-server store reconnect', () => {
     const firstClient = serverSdkMocks.MockClient.instances[0]
 
     firstClient.simulateAuthenticated()
+    firstClient.simulateReconnectReady()
     await initializePromise
 
     store.websocketUrl = 'wss:'
@@ -407,6 +457,7 @@ describe('channel-server store reconnect', () => {
     expect(client.options.token).toBe('persisted-secret')
 
     client.simulateAuthenticated()
+    client.simulateReconnectReady()
     await initializePromise
   })
 
@@ -418,6 +469,7 @@ describe('channel-server store reconnect', () => {
     const firstClient = serverSdkMocks.MockClient.instances[0]
 
     firstClient.simulateAuthenticated()
+    firstClient.simulateReconnectReady()
     await initializePromise
 
     store.websocketAuthToken = 'rotated-secret'
