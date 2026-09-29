@@ -76,7 +76,8 @@ it('delivers one decoded YouTube message through authenticated AIRI SDK and runt
   await vi.waitFor(() => expect(received).toHaveLength(1))
   expect(received[0].data.text).toBe('Hello AIRI 👋')
   expect(received[0].data.textRaw).toBe('Hello AIRI 👋')
-  expect(received[0].data.overrides?.sessionId).toBe('youtube:wire-chat')
+  // AIRI resolves an omitted session to its active chat. Invented IDs fail session loading.
+  expect(received[0].data.overrides?.sessionId).toBeUndefined()
   expect(received[0].data.overrides?.messagePrefix).toContain('Viewer')
   expect(received[0].metadata?.event?.id).toBe('youtube:wire-chat:wire-message')
 })

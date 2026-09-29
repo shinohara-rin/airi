@@ -71,7 +71,9 @@ flowchart LR
 
 The connector authenticates and announces itself to AIRI before it opens the YouTube stream.
 Each forwarded event contains the original text in `text` and `textRaw`.
-The message prefix identifies the viewer and their channel. The session ID is `youtube:<liveChatId>`.
+The message prefix identifies the viewer by display name. Messages use AIRI’s active chat session.
+Select a dedicated AIRI conversation before starting if you want separate stream history.
+The connector does not create sessions. An invented session ID fails AIRI’s session lookup.
 The event ID is `youtube:<liveChatId>:<messageId>`.
 Viewer content remains user input and does not become a system instruction.
 
@@ -84,7 +86,8 @@ Viewer content remains user input and does not become a system instruction.
 - It advances the page token only after each eligible message in the response reaches the SDK transport.
 - If a send fails partway through a response, the connector resumes from the prior page token and suppresses recently accepted IDs.
 - Retryable gRPC failures are `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `RESOURCE_EXHAUSTED`, and `INTERNAL`. Other status codes stop the connector.
-- A closed stream or failed AIRI connection also uses the retry budget. Delays grow from one second to thirty seconds.
+- A stream that returns no response or a failed AIRI connection uses the retry budget. Delays grow from one second to thirty seconds.
+- Successful idle streams resume after one second, even with an unchanged cursor. They do not consume the failure retry budget.
 - Cursor progress resets the retry budget. Persistent quota or connection failures eventually stop with a nonzero exit code.
 - A chat-ended event or `offlineAt` stops the connector. SIGINT and SIGTERM cancel the stream or retry wait before client cleanup.
 

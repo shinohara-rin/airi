@@ -40,7 +40,7 @@ async function fixture(handler: V3DataLiveChatMessageServiceHandlers['StreamList
 }
 
 describe('youTube to AIRI connector', () => {
-  it('uses authenticated StreamList and forwards text with viewer and session identity', async () => {
+  it('uses authenticated StreamList and forwards text with viewer identity in the active AIRI session', async () => {
     const calls: string[] = []
     const fixtureResult = await fixture((call) => {
       expect(call.metadata.get('x-goog-api-key')).toEqual(['test-key'])
@@ -60,7 +60,7 @@ describe('youTube to AIRI connector', () => {
       data: {
         text: 'hello one',
         textRaw: 'hello one',
-        overrides: { sessionId: 'youtube:chat', messagePrefix: '(YouTube viewer "Viewer", channel viewer-channel): ' },
+        overrides: { messagePrefix: '(YouTube viewer "Viewer"): ' },
       },
       metadata: { event: { id: 'youtube:chat:one' } },
     }))
@@ -143,6 +143,21 @@ describe('youTube to AIRI connector', () => {
     await expect(run).rejects.not.toThrow('sensitive upstream details')
     expect(handler).toHaveBeenCalledTimes(1)
     expect(f.close).toHaveBeenCalledOnce()
+  })
+
+  it('resumes successful idle streams without spending the failure retry budget', async () => {
+    const tokens: string[] = []
+    const f = await fixture((call) => {
+      tokens.push(call.request.pageToken)
+      if (tokens.length < 3)
+        call.write({ items: [], nextPageToken: 'unchanged' })
+      else
+        call.write({ items: [message('after-idle')], offlineAt: 'ended' })
+      call.end()
+    }, { YOUTUBE_MAX_RETRIES: '0' })
+    await f.connector.run(new AbortController().signal)
+    expect(tokens).toEqual(['', 'unchanged', 'unchanged'])
+    expect(f.send).toHaveBeenCalledOnce()
   })
 
   it('bounds retries even when the stream closes without progress', async () => {

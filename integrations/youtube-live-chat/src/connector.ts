@@ -65,6 +65,7 @@ export class LiveChatConnector {
           }, metadata)
           const cancel = () => call.cancel()
           signal.addEventListener('abort', cancel, { once: true })
+          let receivedBatch = false
           try {
             // Node's readable iterator applies backpressure. Do not create an unbounded event queue.
             const batches: AsyncIterable<ChatBatch> = call
@@ -90,13 +91,20 @@ export class LiveChatConnector {
               if (pageToken !== batch.nextPageToken)
                 retries = 0
               pageToken = batch.nextPageToken
+              receivedBatch = true
             }
           }
           finally {
             signal.removeEventListener('abort', cancel)
             call.cancel()
           }
-          // An RPC can finish while the chat is still active. Reopen it with the accepted cursor.
+          // YouTube completes healthy idle RPCs with an unchanged cursor. Resume them without
+          // spending the failure budget. Delay even successful completion to avoid a tight loop.
+          if (receivedBatch) {
+            retries = 0
+            await setTimeout(1_000, undefined, { signal })
+            continue
+          }
         }
         catch (error) {
           if (signal.aborted)
@@ -156,8 +164,8 @@ export class LiveChatConnector {
         text,
         textRaw: text,
         overrides: {
-          sessionId: `youtube:${this.config.liveChatId}`,
-          messagePrefix: `(YouTube viewer ${JSON.stringify(displayName)}, channel ${channelId}): `,
+          // AIRI owns session creation. An omitted ID routes to its existing active chat.
+          messagePrefix: `(YouTube viewer ${JSON.stringify(displayName)}): `,
         },
       },
     })
