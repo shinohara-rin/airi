@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { watch } from 'vue'
 
 import { createSpeechPipelineRuntime } from '../services/speech/pipeline-runtime'
 import { useModsServerChannelStore } from './mods/api/channel-server'
@@ -7,7 +8,7 @@ export const useSpeechRuntimeStore = defineStore('speech-runtime', () => {
   const runtime = createSpeechPipelineRuntime()
   const serverChannel = useModsServerChannelStore()
   let stopSpeech: (() => void) | undefined
-  let stopReconnect: (() => void) | undefined
+  let stopConnectionWatch: (() => void) | undefined
   const consumer = { event: 'output:speech', mode: 'consumer-group', group: 'speech-output' } as const
 
   function openIntent(options?: Parameters<typeof runtime.openIntent>[0]) {
@@ -29,9 +30,12 @@ export const useSpeechRuntimeStore = defineStore('speech-runtime', () => {
       intent.writeFlush()
       intent.end()
     })
-    const registerConsumer = () => serverChannel.send({ type: 'module:consumer:register', data: consumer })
-    registerConsumer()
-    stopReconnect = serverChannel.onReconnected(registerConsumer)
+    // A replacement socket can be a first connection after the token loads.
+    // Register on each connected transition, including those without a reconnect callback.
+    stopConnectionWatch = watch(() => serverChannel.connected, (connected) => {
+      if (connected)
+        serverChannel.send({ type: 'module:consumer:register', data: consumer })
+    }, { immediate: true, flush: 'sync' })
   }
 
   function isHost() {
@@ -41,9 +45,9 @@ export const useSpeechRuntimeStore = defineStore('speech-runtime', () => {
   async function dispose() {
     if (stopSpeech) {
       stopSpeech()
-      stopReconnect?.()
+      stopConnectionWatch?.()
       stopSpeech = undefined
-      stopReconnect = undefined
+      stopConnectionWatch = undefined
       serverChannel.send({ type: 'module:consumer:unregister', data: consumer })
     }
     await runtime.dispose()
