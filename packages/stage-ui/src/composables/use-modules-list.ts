@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 
 import factorioIcon from '../assets/factorio-simple.png'
 
+import { useAgentLoopSettingsStore } from '../stores/agent-loop-settings'
 import { useArtistryStore } from '../stores/modules/artistry'
 import { useConsciousnessStore } from '../stores/modules/consciousness'
 import { useDiscordStore } from '../stores/modules/discord'
@@ -40,6 +41,7 @@ export function useModulesList() {
   const discordStore = useDiscordStore()
   const twitterStore = useTwitterStore()
   const webSearchStore = useWebSearchStore()
+  const agentLoopSettings = useAgentLoopSettingsStore()
   const minecraftStore = useMinecraftStore()
   const factorioStore = useFactorioStore()
   const artistryStore = useArtistryStore()
@@ -92,6 +94,16 @@ export function useModulesList() {
       icon: 'i-solar:magnifer-bold-duotone',
       to: '/settings/modules/web-search',
       configured: webSearchStore.configured,
+      category: 'essential',
+    },
+    {
+      id: 'autonomy',
+      name: t('settings.pages.modules.autonomy.title'),
+      description: t('settings.pages.modules.autonomy.description'),
+      icon: 'i-solar:heart-pulse-bold-duotone',
+      to: '/settings/modules/autonomy',
+      // Autonomy has no required setup. It counts as configured once AIRI speaks up on its own.
+      configured: agentLoopSettings.heartbeatSeconds > 0,
       category: 'essential',
     },
     {

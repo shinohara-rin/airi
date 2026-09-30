@@ -885,6 +885,35 @@ pages:
       access-token-secret-description: Your X / Twitter access token secret
       access-token-secret-placeholder: Enter your X / Twitter access token secret
       configured: X / Twitter is properly configured!
+    autonomy:
+      title: Autonomy
+      description: Let AIRI react to events and speak up when it is quiet
+      heartbeat:
+        enable: Speak up when quiet
+        enable-description: When nothing happens for a while, AIRI gets a quiet notice and can say something on its own.
+        interval: Quiet interval
+        interval-description: Seconds of quiet before the first notice. Each quiet notice doubles the wait, up to eight times. Any new event resets it.
+      speech-end:
+        label: When AIRI finishes speaking
+        description: Choose whether the end of AIRI's speech makes it think again.
+        options:
+          piggyback:
+            label: Wait for the next event
+            description: AIRI learns about it with the next event. This costs the least.
+          debounce:
+            label: Think after a short pause
+            description: AIRI thinks again once nothing new arrives for a moment.
+          flush:
+            label: Think right away
+            description: AIRI thinks again at once. This costs the most.
+      spend-guard:
+        enable: Limit automatic thinking
+        enable-description: When AIRI used too many tokens, events and quiet notices wait for your next message.
+        tokens: Token limit
+        tokens-description: Tokens that automatic thinking can use in one time window.
+        window: Time window
+        window-description: Seconds that the token limit covers.
+      cost-notice: Each quiet notice makes a model request, so it uses tokens.
     web-search:
       title: Web Search
       description: Let AIRI search the web for current information
