@@ -171,7 +171,8 @@ function onVRMInteract(target: VrmInteractionTarget) {
   vrmViewerRef.value?.setExpression(getVrmInteractionExpression(target), 1)
 }
 
-const { onBeforeMessageComposed, onBeforeSend, onTokenLiteral, onTokenSpecial, onStreamEnd, onAssistantResponseEnd } = useChatStore()
+const chatStore = useChatStore()
+const { onBeforeMessageComposed, onBeforeSend, onTokenLiteral, onTokenSpecial, onStreamEnd, onAssistantResponseEnd } = chatStore
 const chatHookCleanups: Array<() => void> = []
 // WORKAROUND: clear previous handlers on unmount to avoid duplicate calls when this component remounts.
 //             We keep per-hook disposers instead of wiping the global chat hooks to play nicely with
@@ -604,10 +605,12 @@ speechPipeline.on('onSpecial', (segment) => {
 
 speechPipeline.on('onTurnEnd', (turnId) => {
   streamingControl.completeTurn(turnId)
+  chatStore.reportSpeechTurn(turnId, false)
 })
 
 speechPipeline.on('onTurnCancel', ({ turnId }) => {
   streamingControl.cancelTurn(turnId)
+  chatStore.reportSpeechTurn(turnId, true)
 })
 
 function resetSpeakingState() {

@@ -1,4 +1,4 @@
-import type { ChatOrchestratorRuntimeState, ChatOrchestratorSendOptions, Conversation, StreamEvent, StreamOptions } from '@proj-airi/core-agent'
+import type { AgentEventInput, ChatOrchestratorRuntimeState, ChatOrchestratorSendOptions, Conversation, StreamEvent, StreamOptions, TriggerMode } from '@proj-airi/core-agent'
 import type { GenerationProvider } from '@proj-airi/provider-inference'
 import type { WebSocketEventInputs } from '@proj-airi/server-sdk'
 import type { Message } from '@xsai/shared-chat'
@@ -26,6 +26,7 @@ import {
   AIRI_CHAT_ROUND_ID_HEADER,
   AIRI_CHAT_SESSION_ID_HEADER,
 } from '../libs/product-signals/headers'
+import { useAgentLoopSettingsStore } from './agent-loop-settings'
 import { useLLM } from './ai/chat-llm/llm'
 import { resolveLlmTools } from './ai/chat-llm/tool-resolver'
 import { useLlmToolsStore } from './ai/chat-llm/tools'
@@ -183,6 +184,7 @@ export const useChatStore = defineStore('chat', () => {
   const consciousnessStore = useConsciousnessStore()
   const artistryAutonomousStore = useAutonomousArtistryStore()
   const { activeModel, activeProvider } = storeToRefs(consciousnessStore)
+  const agentLoopSettings = useAgentLoopSettingsStore()
   const chatSession = useChatSessionStore()
   const chatStream = useChatStreamStore()
   const chatContext = useChatContextStore()
@@ -365,7 +367,59 @@ export const useChatStore = defineStore('chat', () => {
     chatSession.setSessionMessages(sessionId, nextMessages)
   }
 
+  /**
+   * Model and provider for a turn that no chat message started, such as a plugin event or a heartbeat.
+   * Returns `undefined` while no provider or model is configured.
+   */
+  async function resolveAgentRequest() {
+    const providerId = activeProvider.value
+    const modelId = activeModel.value
+    if (!providerId || !modelId)
+      return undefined
+
+    const chatProvider = await consciousnessStore.getChatProviderInstance(providerId)
+    if (!chatProvider)
+      return undefined
+
+    return {
+      model: modelId,
+      chatProvider,
+      providerId,
+      temperature: consciousnessStore.activeTemperature,
+      topP: consciousnessStore.activeTopP,
+      // Tools that earlier messages of the session selected stay available to the events of that session.
+      tools: async () => {
+        const names = collectToolReferences(activeSessionId.value).map(tool => tool.name)
+        const selected = llmToolsStore.getToolsByNames(...names)
+        const selectedNames = new Set(selected.map(tool => tool.function.name))
+        return [...selected, ...llmToolsStore.activeTools.filter(tool => !selectedNames.has(tool.function.name))]
+      },
+    }
+  }
+
+  /**
+   * Text of each spoken turn by round id, until the stage reports how its playback ended. A reply that is
+   * never played, for example with speech off, is never reported, so the oldest entries are dropped.
+   */
+  const spokenByTurn = new Map<string, string>()
+  const SPOKEN_TURNS_LIMIT = 50
+
+  function rememberSpokenTurn(turnId: string, text: string) {
+    if (!text.trim())
+      return
+
+    spokenByTurn.set(turnId, text)
+    for (const oldest of spokenByTurn.keys()) {
+      if (spokenByTurn.size <= SPOKEN_TURNS_LIMIT)
+        break
+      spokenByTurn.delete(oldest)
+    }
+  }
+
   const runtime = createChatOrchestratorRuntime({
+    resolveAgentRequest,
+    heartbeatMs: () => agentLoopSettings.heartbeatMs,
+    spendGuard: () => agentLoopSettings.spendGuard,
     session: {
       ensureSession: sessionId => chatSession.ensureSession(sessionId),
       getSessionMessages: sessionId => chatSession.getSessionMessages(sessionId).map(message => toRaw(message)),
@@ -429,7 +483,8 @@ export const useChatStore = defineStore('chat', () => {
         })
       }
     },
-    onAssistantMessageAppended: ({ sessionId, message }) => {
+    onAssistantMessageAppended: ({ sessionId, message, messageText, roundId }) => {
+      rememberSpokenTurn(roundId, messageText)
       if (isCloudSyncableMessage(message) && message.id) {
         void chatSession.pushMessageToCloud(sessionId, {
           id: message.id,
@@ -624,6 +679,34 @@ export const useChatStore = defineStore('chat', () => {
     return ingest(sendingMessage, options, forkSessionId || baseSessionId)
   }
 
+  /**
+   * Gives the agent an event from a plugin or the stage. The agent answers it in the current session.
+   * `trigger` chooses how it wakes the agent. Leave it out for `debounce`.
+   */
+  function pushAgentEvent(input: AgentEventInput, trigger?: TriggerMode) {
+    runtime.pushEvent(input, { trigger })
+  }
+
+  /**
+   * Tells the agent how playback of a spoken turn ended. Turns the agent did not speak are ignored.
+   * The speech pipeline calls it when a turn ends or is cancelled.
+   */
+  function reportSpeechTurn(turnId: string, interrupted: boolean) {
+    const text = spokenByTurn.get(turnId)
+    if (text === undefined)
+      return
+
+    spokenByTurn.delete(turnId)
+    const shown = text.length > 80 ? `${text.slice(0, 80)}…` : text
+    runtime.pushEvent({
+      type: 'stage.speech_ended',
+      source: 'stage',
+      origin: 'internal',
+      text: interrupted ? `speech was cut off: "${shown}"` : `finished speaking: "${shown}"`,
+      meta: { turnId, interrupted },
+    }, { trigger: agentLoopSettings.speechEndTrigger })
+  }
+
   async function cancelPendingSends(sessionId?: string) {
     runtime.cancelPendingSends(sessionId)
   }
@@ -649,6 +732,8 @@ export const useChatStore = defineStore('chat', () => {
     send,
     cancelPendingSends,
     getPendingQueuedSendSnapshot,
+    pushAgentEvent,
+    reportSpeechTurn,
 
     clearHooks: runtime.hooks.clearHooks,
 
@@ -676,7 +761,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 }, {
   synced: {
-    actions: ['cancelPendingSends', 'cleanup', 'deleteSession', 'rerunToolCall', 'retry', 'send'],
+    actions: ['cancelPendingSends', 'cleanup', 'deleteSession', 'pushAgentEvent', 'rerunToolCall', 'retry', 'send'],
     state: true,
   },
 })

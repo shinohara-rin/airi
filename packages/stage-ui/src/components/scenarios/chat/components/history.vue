@@ -234,6 +234,7 @@ function emitToolCallRerun(
     >
       <template #default="{ item: message, index }">
         <ChatHistoryMessageFrame
+          v-if="!(message.role === 'user' && message.agentEvent)"
           :key="getChatHistoryItemKey(message, index)"
           :variant="variant"
           :scroll-container="chatHistoryRef"

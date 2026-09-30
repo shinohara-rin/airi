@@ -15,6 +15,7 @@ import {
   AIRI_CHAT_ROUND_ID_HEADER,
   AIRI_CHAT_SESSION_ID_HEADER,
 } from '../libs/product-signals/headers'
+import { useAgentLoopSettingsStore } from './agent-loop-settings'
 import { useChatStore } from './chat'
 import { useContextObservabilityStore } from './devtools/context-observability'
 import { useConsciousnessSettingsStore } from './modules/consciousness-settings'
@@ -205,6 +206,7 @@ vi.mock('./ai/chat-llm/tools', () => ({
   useLlmToolsStore: () => ({
     getToolsByNames: (...names: string[]) => getToolsByNamesMock(names),
     tools: [{ function: { name: 'computer_use' }, requiresExplicitSelection: true }],
+    activeTools: [],
   }),
 }))
 
@@ -1395,5 +1397,68 @@ describe('chat store contract', () => {
       hidden: true,
     })
     expect(ensureSessionMock).toHaveBeenCalledWith('session-forked')
+  })
+
+  it('answers a plugin event in the current session with the configured provider', async () => {
+    llmStreamMock.mockImplementation(async (_model: string, _chatProvider: GenerationProvider, _context: Conversation, options: any) => {
+      await options.onStreamEvent({ type: 'text-delta', text: 'noted' })
+      await options.onStreamEvent({ type: 'finish' })
+    })
+    const store = useChatStore()
+
+    store.pushAgentEvent({ type: 'game.job_finished', source: 'game', text: '[game] the job finished' }, 'flush')
+    await vi.waitFor(() => expect(llmStreamMock).toHaveBeenCalledTimes(1))
+
+    expect(llmStreamMock.mock.calls[0][0]).toBe('gpt-test')
+    await vi.waitFor(() => expect(sessionMessages['session-1']?.some(message => message.role === 'assistant')).toBe(true))
+    expect(sessionMessages['session-1']?.find(message => message.role === 'user')).toMatchObject({
+      content: '[game] the job finished',
+      agentEvent: { type: 'game.job_finished', source: 'game' },
+    })
+  })
+
+  it('reports how spoken playback ended and lets the report ride with the next message', async () => {
+    llmStreamMock.mockImplementation(async (_model: string, _chatProvider: GenerationProvider, _context: Conversation, options: any) => {
+      await options.onStreamEvent({ type: 'text-delta', text: 'hello there' })
+      await options.onStreamEvent({ type: 'finish' })
+    })
+    const store = useChatStore()
+    let turnId = ''
+    store.onTokenLiteral(async (_literal, context) => {
+      turnId = context.turnId
+    })
+
+    await store.ingest('hi', { model: 'gpt-test', chatProvider: provider })
+    store.reportSpeechTurn(turnId, false)
+    store.reportSpeechTurn('a turn the agent did not speak', false)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(llmStreamMock).toHaveBeenCalledTimes(1)
+
+    await store.ingest('and now?', { model: 'gpt-test', chatProvider: provider })
+
+    expect(sessionMessages['session-1']?.filter(message => message.role === 'user').map(message => message.content)).toEqual([
+      'hi',
+      'finished speaking: "hello there"',
+      'and now?',
+    ])
+  })
+
+  it('wakes the agent when the speech end trigger is flush', async () => {
+    llmStreamMock.mockImplementation(async (_model: string, _chatProvider: GenerationProvider, _context: Conversation, options: any) => {
+      await options.onStreamEvent({ type: 'text-delta', text: 'spoken' })
+      await options.onStreamEvent({ type: 'finish' })
+    })
+    const store = useChatStore()
+    useAgentLoopSettingsStore().speechEndTrigger = 'flush'
+    let turnId = ''
+    store.onTokenLiteral(async (_literal, context) => {
+      turnId = context.turnId
+    })
+
+    await store.ingest('hi', { model: 'gpt-test', chatProvider: provider })
+    store.reportSpeechTurn(turnId, true)
+
+    await vi.waitFor(() => expect(llmStreamMock).toHaveBeenCalledTimes(2))
+    expect(sessionMessages['session-1']?.some(message => message.content === 'speech was cut off: "spoken"')).toBe(true)
   })
 })
