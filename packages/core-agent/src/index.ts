@@ -3,6 +3,8 @@ export type { ChatHookRegistry } from './contracts/hook-types'
 export type { AgentLLMPort } from './contracts/llm-port'
 export type { AgentSessionPort } from './contracts/session-port'
 export type { AgentForegroundStreamPort } from './contracts/stream-port'
+export { AgentLoop, Heartbeat, WakeBus } from './event-loop'
+export type { AgentEvent, AgentEventInput, AgentLoopOptions, AgentRequest, AgentTurnResult, EventOrigin, PushOptions, TriggerMode, WakeBusOptions } from './event-loop'
 export { chatContentToInputSegments, chatMessagesToTurns, conversationToChatMessages } from './messages/chat-completions'
 export {
   buildContextPromptMessage,
