@@ -1,0 +1,20 @@
+{
+  "name": "@proj-airi/airi-plugin-airicraft",
+  "type": "module",
+  "version": "0.12.0-beta.5",
+  "private": true,
+  "description": "Lets AIRI play Minecraft through the airicraft mod. The plugin gives the agent the mod's tools and events.",
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@moeru/std": "catalog:",
+    "@proj-airi/plugin-sdk": "workspace:*",
+    "@proj-airi/plugin-sdk-tamagotchi": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "manifestVersion": 2,
+  "kind": "manifest.extension.airi.moeru.ai",
+  "id": "airi-plugin-airicraft",
+  "version": "0.12.0-beta.5",
+  "engines": {
+    "airi": "*",
+    "runtimes": ["electron"]
+  },
+  "entrypoints": {
+    "electron": "./dist/extension.mjs"
+  },
+  "permissions": {},
+  "kits": {
+    "uses": [
+      { "id": "kit.tool", "version": "^1.0.0" },
+      { "id": "kit.agent-events", "version": "^1.0.0" }
+    ]
+  }
+}

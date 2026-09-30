@@ -5473,6 +5473,22 @@ importers:
         specifier: 'catalog:'
         version: 26.2.0
 
+  plugins/airi-plugin-airicraft:
+    dependencies:
+      '@moeru/std':
+        specifier: 'catalog:'
+        version: 0.1.0-beta.17
+      '@proj-airi/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@proj-airi/plugin-sdk-tamagotchi':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk-tamagotchi
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+
   plugins/airi-plugin-bilibili-laplace:
     dependencies:
       '@guiiai/logg':
