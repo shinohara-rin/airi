@@ -255,6 +255,17 @@ export async function setupExtensionHost(options: SetupExtensionHostOptions): Pr
     }
   })
 
+  // An extension can change its tools after load, for example when a game starts. Coalesce a burst of
+  // reports into one renderer refresh.
+  const toolsUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  hostService.tools.onChange((extensionId) => {
+    clearTimeout(toolsUpdateTimers.get(extensionId))
+    toolsUpdateTimers.set(extensionId, setTimeout(() => {
+      toolsUpdateTimers.delete(extensionId)
+      context.emit(electronPluginToolsChanged, { reason: 'updated', extensionId })
+    }, 100))
+  })
+
   hostService.agentEvents.subscribe(event => context.emit(electronPluginAgentEvent, event))
 
   onAppBeforeQuit(() => hostService.dispose())

@@ -56,6 +56,7 @@ function createToolRuntime(input: {
   moduleId?: string
   register: ToolRuntimeServices['register']
   registerToolsetPrompt: ToolRuntimeServices['registerToolsetPrompt']
+  notifyChanged?: ToolRuntimeServices['notifyChanged']
 }): ToolKitRuntime {
   return {
     extensionId: input.extensionId,
@@ -65,6 +66,7 @@ function createToolRuntime(input: {
     tools: {
       register: input.register,
       registerToolsetPrompt: input.registerToolsetPrompt,
+      notifyChanged: input.notifyChanged ?? vi.fn(),
     },
   }
 }
@@ -845,5 +847,35 @@ describe('plugin-sdk-tamagotchi', () => {
         },
       },
     })
+  })
+})
+
+describe('tool change notifications', () => {
+  it('asks the host to refresh when an extension reports changed tools', async () => {
+    const notifyChanged = vi.fn()
+    const client = toolKit.createClient(createToolRuntime({
+      extensionId: 'airicraft',
+      sessionId: 'session-1',
+      register: vi.fn(),
+      registerToolsetPrompt: vi.fn(),
+      notifyChanged,
+    }))
+
+    await client.notifyChanged()
+
+    expect(notifyChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('tells registry listeners which extension changed and stops after unsubscribe', () => {
+    const registry = new TamagotchiToolRegistry()
+    const listener = vi.fn()
+    const unsubscribe = registry.onChange(listener)
+
+    registry.notifyChanged('airicraft')
+    unsubscribe()
+    registry.notifyChanged('other')
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledWith('airicraft')
   })
 })

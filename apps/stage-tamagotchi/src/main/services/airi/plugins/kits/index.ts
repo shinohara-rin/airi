@@ -63,6 +63,9 @@ function createHostToolKit(options: { tools: TamagotchiToolRegistry }): KitRef<T
               ...input,
             })
           },
+          notifyChanged: () => {
+            options.tools.notifyChanged(runtime.extensionId)
+          },
           registerToolsetPrompt: (input) => {
             ensureCleanup()
             options.tools.registerToolsetPrompt({

@@ -110,6 +110,24 @@ export interface ToolsetPromptRegistryRecord {
 export class TamagotchiToolRegistry {
   private readonly tools = new Map<string, ToolRegistryRecord>()
   private readonly toolsetPrompts = new Map<string, ToolsetPromptRegistryRecord>()
+  private readonly changeListeners = new Set<(ownerExtensionId: string) => void>()
+
+  /**
+   * Listens for extensions that report a change to what their tools offer, for example after a tool set
+   * arrives late or a tool becomes unavailable. Registration itself does not notify, so loading an
+   * extension with many tools causes one refresh at most.
+   */
+  onChange(listener: (ownerExtensionId: string) => void) {
+    this.changeListeners.add(listener)
+    return () => {
+      this.changeListeners.delete(listener)
+    }
+  }
+
+  notifyChanged(ownerExtensionId: string) {
+    for (const listener of this.changeListeners)
+      listener(ownerExtensionId)
+  }
 
   register(record: ToolRegistryRecord) {
     const key = `${record.ownerExtensionId}:${record.tool.id}`
@@ -162,6 +180,7 @@ export class TamagotchiToolRegistry {
   clear() {
     this.tools.clear()
     this.toolsetPrompts.clear()
+    this.changeListeners.clear()
   }
 
   async listAvailableDescriptors() {

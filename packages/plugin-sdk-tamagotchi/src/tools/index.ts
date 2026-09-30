@@ -88,6 +88,13 @@ export interface ToolKitClient<TInputSchema = unknown> {
    * Registers one toolset prompt through the host-owned tool registry.
    */
   registerToolsetPrompt: (registration: PluginToolsetPromptRegistration) => Promise<void>
+
+  /**
+   * Tells the host that the tools of this extension changed after they were registered, for example
+   * because a tool set arrived late or a tool became unavailable. The host then refreshes what the
+   * agent can call. Call it once after a batch of changes.
+   */
+  notifyChanged: () => Promise<void>
 }
 
 /**
@@ -104,6 +111,7 @@ export interface ToolKitRuntime extends KitClientRuntime {
       execute: (input: unknown) => Promise<unknown> | unknown
     }) => Promise<void> | void
     registerToolsetPrompt: (input: PluginToolsetPromptDefinitionRecord) => Promise<void> | void
+    notifyChanged: () => Promise<void> | void
   }
 }
 
@@ -319,6 +327,13 @@ export const toolKit = defineKit<ToolKitClient>({
         }
 
         await toolRuntime.tools.registerToolsetPrompt(registration)
+      },
+      async notifyChanged() {
+        if (!toolRuntime.tools) {
+          throw new Error('toolKit requires a host tool registry runtime.')
+        }
+
+        await toolRuntime.tools.notifyChanged()
       },
     }
   },

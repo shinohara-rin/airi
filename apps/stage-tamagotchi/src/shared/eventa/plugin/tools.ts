@@ -93,7 +93,7 @@ export interface ElectronPluginXsaiToolsetDefinition {
  * - N/A
  */
 export interface ElectronPluginToolsChangedPayload {
-  reason: 'loaded' | 'load-enabled' | 'unloaded' | 'enabled-state-changed'
+  reason: 'loaded' | 'load-enabled' | 'unloaded' | 'enabled-state-changed' | 'updated'
   extensionId?: string
 }
 
