@@ -268,17 +268,55 @@ describe('agentLoop', () => {
     expect(settled[0].assistantTurn?.type).toBe('assistant')
   })
 
-  it('drops a batch that shouldRun rejects', async () => {
+  it('drops stale events at delivery and reports them', async () => {
     const { llm, conversations } = scriptedLlm(say('ok'))
-    const { loop, settled } = start(llm, { shouldRun: batch => batch[0].text !== 'stale' })
+    const discarded: string[] = []
+    const { loop, settled } = start(llm, {
+      isStale: event => event.text === 'stale',
+      onDiscarded: events => discarded.push(...events.map(event => event.text)),
+    })
 
     loop.push(chat('stale'), { trigger: 'flush' })
-    await new Promise(resolve => setTimeout(resolve, 30))
+    await waitFor(() => discarded.length === 1)
     loop.push(chat('fresh'), { trigger: 'flush' })
     await waitFor(() => settled.length === 1)
 
     expect(conversations).toHaveLength(1)
     expect(settled[0].events.map(event => event.text)).toEqual(['fresh'])
+  })
+
+  it('discards the events of an interrupted turn instead of answering them again', async () => {
+    const blocked: Script = (_conversation, options) => new Promise<void>((_resolve, reject) => {
+      options.abortSignal?.addEventListener('abort', () => reject(options.abortSignal?.reason))
+    })
+    const { llm, conversations } = scriptedLlm(blocked, say('next'))
+    const { loop, settled } = start(llm)
+
+    loop.push(chat('cancel me'), { trigger: 'flush' })
+    await waitFor(() => conversations.length === 1)
+    loop.interrupt(event => event.text === 'other')
+    expect(settled).toHaveLength(0)
+    loop.interrupt(event => event.text === 'cancel me')
+    await waitFor(() => settled.length === 1)
+    loop.push(chat('after'), { trigger: 'flush' })
+    await waitFor(() => settled.length === 2)
+
+    expect(settled[0].outcome).toBe('cancelled')
+    expect(settled[1].events.map(event => event.text)).toEqual(['after'])
+  })
+
+  it('runs only the events selectEvents chooses and keeps the rest for the next turn', async () => {
+    const { llm } = scriptedLlm(say('a'), say('b'))
+    const { loop, settled } = start(llm, {
+      selectEvents: batch => batch.filter(event => event.meta?.room === batch[0].meta?.room),
+    })
+
+    loop.push({ ...chat('one'), meta: { room: 1 } }, { trigger: 'piggyback' })
+    loop.push({ ...chat('two'), meta: { room: 2 } }, { trigger: 'piggyback' })
+    loop.push({ ...chat('three'), meta: { room: 1 } }, { trigger: 'flush' })
+    await waitFor(() => settled.length === 2)
+
+    expect(settled.map(result => result.events.map(event => event.text))).toEqual([['one', 'three'], ['two']])
   })
 
   it('drops events pushed after stop', async () => {

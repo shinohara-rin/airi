@@ -4,6 +4,7 @@ import type { Message } from '@xsai/shared-chat'
 import type { Conversation } from '../messages/types'
 import type { ChatHistoryItem, ContextMessage, StreamingAssistantMessage } from '../types/chat'
 import type { StreamEvent, StreamOptions } from '../types/llm'
+import type { ChatOrchestratorRuntimeDeps } from './chat-orchestrator-runtime'
 
 import { ContextUpdateStrategy } from '@proj-airi/server-shared/types'
 import { describe, expect, it, vi } from 'vitest'
@@ -16,7 +17,7 @@ const provider: GenerationProvider = {
   generation: model => ({ protocol: 'chat-completions', config: { model, baseURL: 'https://example.com/' } }),
 }
 
-function createHarness(getActiveProvider = () => 'mock-provider') {
+function createHarness(getActiveProvider = () => 'mock-provider', extraDeps: Partial<ChatOrchestratorRuntimeDeps> = {}) {
   const sessionMessages: Record<string, ChatHistoryItem[]> = {
     'session-1': [
       {
@@ -110,6 +111,7 @@ function createHarness(getActiveProvider = () => 'mock-provider') {
     onLlmGeneration: event => telemetry.llmGeneration.push(event),
     onMessageRound: event => telemetry.messageRound.push(event),
     onMessageRoundFailed: event => telemetry.messageRoundFailed.push(event),
+    ...extraDeps,
   })
 
   return {
@@ -1397,4 +1399,103 @@ it('runs consecutive orchestrator turns through the real Responses adapter', asy
   // https://github.com/moeru-ai/airi/pull/2477#discussion_r4015043327
   expect(JSON.stringify(harness.lifecycleRecords)).not.toContain('encrypted_content')
   expect(JSON.stringify(harness.lifecycleRecords)).toContain('answer')
+})
+
+describe('createChatOrchestratorRuntime events', () => {
+  const agentRequest = () => Promise.resolve({ model: 'agent-model', chatProvider: provider, providerId: 'mock-provider' })
+
+  async function waitFor(condition: () => boolean) {
+    await vi.waitFor(() => expect(condition()).toBe(true), { timeout: 2000 })
+  }
+
+  it('answers a plugin event that wakes the agent, and speaks through the token hooks', async () => {
+    const harness = createHarness(undefined, { resolveAgentRequest: agentRequest })
+    const spoken: string[] = []
+    harness.runtime.hooks.onTokenLiteral(async (literal) => {
+      spoken.push(literal)
+    })
+
+    harness.runtime.pushEvent({ type: 'game.job_finished', source: 'game', text: '[game] the mining job finished' }, { trigger: 'flush' })
+    await waitFor(() => harness.assistantAppended.length === 1)
+
+    expect(harness.stream.mock.calls[0][0]).toBe('agent-model')
+    expect(spoken.join('')).toContain('assistant reply')
+    expect(harness.sessionMessages['session-1']?.filter(message => message.role === 'user')).toMatchObject([
+      { content: '[game] the mining job finished', agentEvent: { type: 'game.job_finished', source: 'game' } },
+    ])
+  })
+
+  it('keeps a piggyback event out of the way until a chat send wakes the agent', async () => {
+    const harness = createHarness(undefined, { resolveAgentRequest: agentRequest })
+
+    harness.runtime.pushEvent({ type: 'stage.speech_ended', source: 'stage', text: 'finished speaking' }, { trigger: 'piggyback' })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(harness.stream).not.toHaveBeenCalled()
+
+    await harness.runtime.ingest('hello', { model: 'gpt-test', chatProvider: provider })
+
+    expect(harness.stream).toHaveBeenCalledTimes(1)
+    expect(harness.sessionMessages['session-1']?.filter(message => message.role === 'user').map(message => message.content)).toEqual([
+      'finished speaking',
+      'hello',
+    ])
+  })
+
+  it('runs a heartbeat turn while the agent is quiet', async () => {
+    vi.useFakeTimers()
+    try {
+      const harness = createHarness(undefined, { resolveAgentRequest: agentRequest, heartbeatMs: () => 1000 })
+
+      await vi.advanceTimersByTimeAsync(1000)
+
+      expect(harness.stream).toHaveBeenCalledTimes(1)
+      expect(harness.sessionMessages['session-1']?.filter(message => message.role === 'user')).toMatchObject([
+        { content: '[system] quiet for 1 seconds.', agentEvent: { type: 'heartbeat' } },
+      ])
+      await harness.runtime.stop()
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not store an error message when an event arrives and no provider is configured', async () => {
+    const harness = createHarness(undefined, { resolveAgentRequest: () => Promise.resolve(undefined) })
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    harness.runtime.pushEvent({ type: 'game.percept', source: 'game', text: 'a bird' }, { trigger: 'flush' })
+    await waitFor(() => errors.mock.calls.length > 0)
+
+    expect(harness.stream).not.toHaveBeenCalled()
+    expect(harness.sessionMessages['session-1']?.filter(message => message.role === 'error' || message.role === 'user')).toEqual([])
+    errors.mockRestore()
+    expect(harness.runtime.getSending()).toBe(false)
+  })
+
+  it('cancels a chat turn that has produced nothing when a preempt event arrives and stores the message once', async () => {
+    const harness = createHarness(undefined, { resolveAgentRequest: agentRequest })
+    let calls = 0
+    harness.stream.mockImplementation(async (_model, _chatProvider, _messages, options) => {
+      calls += 1
+      if (calls === 1) {
+        await new Promise<void>((_resolve, reject) => {
+          options?.abortSignal?.addEventListener('abort', () => reject(options.abortSignal?.reason))
+        })
+      }
+      await options?.onStreamEvent?.({ type: 'text-delta', text: 'answered' })
+      await options?.onStreamEvent?.({ type: 'finish' })
+    })
+
+    const sent = harness.runtime.ingest('slow question', { model: 'gpt-test', chatProvider: provider })
+    await waitFor(() => calls === 1)
+    harness.runtime.pushEvent({ type: 'game.danger', source: 'game', text: 'a creeper is near' }, { trigger: 'preempt' })
+    await sent
+
+    expect(calls).toBe(2)
+    expect(harness.sessionMessages['session-1']?.filter(message => message.role === 'user').map(message => message.content)).toEqual([
+      'slow question',
+      'a creeper is near',
+    ])
+    expect(harness.assistantAppended).toHaveLength(1)
+  })
 })

@@ -4,12 +4,14 @@ import type { CommonContentPart, Message, ToolMessage } from '@xsai/shared-chat'
 import type { AgentContextPort } from '../contracts/context-port'
 import type { AgentLLMPort } from '../contracts/llm-port'
 import type { AgentForegroundStreamPort } from '../contracts/stream-port'
-import type { AssistantTurn, Conversation, Turn } from '../messages/types'
+import type { AgentEvent, AgentEventInput, AgentRequest, AgentTurnResult, TriggerMode, WakeBusOptions } from '../event-loop'
+import type { Conversation, Turn } from '../messages/types'
 import type { ChatHistoryItem, ChatSlices, ChatStreamEventContext, ChatToolReference, ContextMessage, StreamingAssistantMessage } from '../types/chat'
 import type { LlmUsage, StreamEvent, StreamOptions } from '../types/llm'
 
 import { createQueue } from '@proj-airi/stream-kit'
 
+import { AgentLoop } from '../event-loop'
 import { chatMessagesToTurns } from '../messages/chat-completions'
 import { formatTimePrefix } from '../messages/datetime-prefix'
 import { renderConversationPreview } from '../messages/preview'
@@ -365,6 +367,19 @@ export interface ChatOrchestratorRuntimeDeps {
     message: StreamingAssistantMessage
     messageText: string
   }) => void
+  /**
+   * Model and provider for a turn that no chat send started, such as a plugin event or a heartbeat.
+   * Return `undefined` when none is configured. The turn then fails without a stored error message.
+   */
+  resolveAgentRequest?: () => Promise<Pick<AgentRequest, 'model' | 'chatProvider' | 'providerId' | 'tools' | 'headers' | 'temperature' | 'topP'> | undefined>
+  /** Debounce timing of the wake bus. */
+  bus?: Partial<WakeBusOptions>
+  /** Base heartbeat interval in milliseconds, read at each beat. No value means no heartbeat. */
+  heartbeatMs?: () => number | undefined
+  /** Stops debounce and heartbeat wakes while a token budget for a time window is used up. */
+  spendGuard?: { maxTokens: number, windowMs: number }
+  /** Longest tool receipt handed to the model. @default 20000 */
+  maxReceiptChars?: number
   /** Called after user turn persistence, before provider prompt composition. */
   onUserTurnReady?: (event: {
     messageText: string
@@ -381,7 +396,7 @@ export interface ChatOrchestratorRuntimeDeps {
  * Platform-agnostic chat orchestrator runtime API.
  */
 export interface ChatOrchestratorRuntime {
-  /** Enqueues a user send for the target session, preserving FIFO order. */
+  /** Sends a user message to the agent for the target session. Resolves when the turn that answers it ends. */
   ingest: (sendingMessage: string, options: ChatOrchestratorSendOptions, targetSessionId?: string) => Promise<void>
   /** Rejects queued sends that have not started yet. */
   cancelPendingSends: (sessionId?: string) => void
@@ -393,6 +408,13 @@ export interface ChatOrchestratorRuntime {
   getSending: () => boolean
   /** Updates the writable sending flag and notifies facade mirrors. */
   setSending: (next: boolean) => void
+  /**
+   * Pushes an event from a plugin or another source. The agent answers it in the current session.
+   * Returns `undefined` after `stop`. `trigger` defaults to `debounce` for external events.
+   */
+  pushEvent: (input: AgentEventInput, options?: { trigger?: TriggerMode }) => AgentEvent | undefined
+  /** Stops the agent loop and its heartbeat. Later sends and events are dropped. */
+  stop: () => Promise<void>
   /** Hook registry preserved from the previous stage-ui store API. */
   hooks: ReturnType<typeof createChatHooks>
 }
@@ -416,9 +438,6 @@ function defaultCreateId() {
  * - A runtime with send queue APIs, hook registry, writable sending state, and queue snapshots.
  */
 export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps): ChatOrchestratorRuntime {
-  // A queued send owns one controller until performSend settles. Session reset
-  // aborts that transport as well as rejecting queued work for the same session.
-  const activeSends = new Map<string, AbortController>()
   const hooks = createChatHooks()
   const now = deps.now ?? (() => Date.now())
   const monotonicNow = deps.monotonicNow ?? (() => globalThis.performance?.now?.() ?? Date.now())
@@ -510,615 +529,688 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
     })
     return { turns }
   }
+  /** What a chat event carries for the runtime. Other events have no `send`. */
+  interface EventMeta {
+    send?: QueuedSend
+  }
 
-  async function performSend(
-    sendingMessage: string,
-    options: ChatOrchestratorSendOptions,
-    generation: number,
-    sessionId: string,
-    abortSignal: AbortSignal,
-    activeProvider: string,
-  ) {
-    if (!sendingMessage && !options.attachments?.length)
+  function sendOf(event: AgentEvent): QueuedSend | undefined {
+    return (event.meta as EventMeta | undefined)?.send
+  }
+
+  function isStaleSend(send: QueuedSend) {
+    return send.cancelled === true || deps.session.getSessionGeneration(send.sessionId) !== send.generation
+  }
+
+  function removePendingSend(send: QueuedSend) {
+    if (!pendingQueuedSends.includes(send))
       return
+    pendingQueuedSends = pendingQueuedSends.filter(item => item !== send)
+    emitStateChange()
+  }
 
-    deps.session.ensureSession(sessionId)
+  /** The state of the one turn that runs now. A turn lives from `resolveRequest` until `settle`. */
+  interface TurnState {
+    sessionId: string
+    generation: number
+    /** The chat send whose options and text drive this turn, if a chat event is in the batch. */
+    primary?: QueuedSend
+    messageText: string
+    assistantMessageId: string
+    roundId: string
+    streamContextMessageId: string
+    correlation: ChatRoundCorrelation
+    streamContext: ChatStreamEventContext
+    building: StreamingAssistantMessage
+    hasVoice: boolean
+    sendSource: 'text' | 'voice'
+    isActivationAttempt: boolean
+    roundStartedAt: number
+    llmRequestStartedAt: number
+    llmFirstTokenEmitted: boolean
+    fullText: string
+    sessionMessagesForSend: ChatHistoryItem[]
+    parser?: ReturnType<typeof useLlmmarkerParser>
+    toolCallQueue?: ReturnType<typeof createQueue<ChatSlices>>
+    model: string
+    providerId: string
+  }
 
-    const existingSessionMessages = deps.session.getSessionMessages(sessionId)
-    let replyToMessageId = resolveReplyTargetId(options.replyToMessageId, existingSessionMessages)
-    const turnIndex = existingSessionMessages.filter(message => message.role === 'user').length + 1
+  /**
+   * Events whose user message is already in the session. A preempted turn returns its events to the queue,
+   * and the next turn must not store them a second time.
+   */
+  const persistedEvents = new Set<string>()
+  let turn: TurnState | undefined
 
-    // Activation measures whether a conversation reaches its first assistant
-    // response. Later turns still emit message and latency telemetry, but they
-    // must not inflate the one-time activation milestones.
-    const isActivationAttempt = !existingSessionMessages.some(message => message.role === 'assistant' && !message.interrupted)
+  function isStaleGeneration(state: TurnState) {
+    return deps.session.getSessionGeneration(state.sessionId) !== state.generation
+  }
 
-    // Datetime is no longer injected through the side-channel context store.
-    // It is applied at message-assembly time (see below) as a system-prompt
-    // date anchor + per-message [HH:MM] prefixes, which is more KV-cache
-    // friendly and less prone to weak models echoing timestamps verbatim.
-    ingestRuntimeContexts()
+  function userMessageFrom(event: AgentEvent, id: string, replyToMessageId: string | undefined, createdAt: number): ChatHistoryItem {
+    const send = sendOf(event)
+    if (!send) {
+      return { role: 'user', content: event.text, createdAt, id, agentEvent: { type: event.type, source: event.source } }
+    }
 
-    const sendingCreatedAt = now()
+    const contentParts: CommonContentPart[] = [{ type: 'text', text: send.sendingMessage }]
+    for (const attachment of send.options.attachments ?? []) {
+      if (attachment.type === 'image')
+        contentParts.push({ type: 'image_url', image_url: { url: `data:${attachment.mimeType};base64,${attachment.data}` } })
+    }
 
-    // TODO: Expire or prune stale runtime contexts from disconnected services before composing.
+    return {
+      role: 'user',
+      content: contentParts.length > 1 ? contentParts : send.sendingMessage,
+      createdAt,
+      id,
+      ...(replyToMessageId ? { replyToMessageId } : {}),
+      ...(send.options.toolReferences?.length ? { tools: send.options.toolReferences } : {}),
+    }
+  }
+
+  /**
+   * Chooses the events one turn answers: all events of one session, in arrival order. Events that name no
+   * session, such as plugin events and heartbeats, join whichever session the turn belongs to.
+   */
+  function selectEvents(batch: AgentEvent[]) {
+    const sessionId = batch.map(sendOf).find(send => send)?.sessionId
+    return batch.filter((event) => {
+      const send = sendOf(event)
+      return !send || send.sessionId === sessionId
+    })
+  }
+
+  async function resolveRequest(batch: AgentEvent[]): Promise<AgentRequest> {
+    const primary = batch.map(sendOf).find(send => send)
+    const sessionId = primary?.sessionId ?? deps.getActiveSessionId()
+    const fallback = primary ? undefined : await deps.resolveAgentRequest?.()
+    if (!primary && !fallback)
+      throw new Error('No active chat provider or model configured')
+
     // Allocate the three per-round ids in their historical order so callers
     // with deterministic id factories keep the same durable message ids.
     const streamContextMessageId = createId()
     const assistantMessageId = createId()
     const roundId = createId()
-    const streamingMessageContext: ChatStreamEventContext = {
-      turnId: roundId,
-      message: {
-        role: 'user',
-        content: sendingMessage,
-        createdAt: sendingCreatedAt,
-        id: streamContextMessageId,
-        ...(replyToMessageId ? { replyToMessageId } : {}),
+    const sendingCreatedAt = now()
+    const existingSessionMessages = deps.session.getSessionMessages(sessionId)
+    const messageText = primary?.sendingMessage ?? batch.map(event => event.text).join('\n')
+    const hasVoice = primary?.options.input?.type === 'input:voice'
+      || primary?.options.input?.type === 'input:text:voice'
+    const model = primary?.options.model ?? fallback!.model
+    const providerId = primary?.providerId ?? fallback!.providerId
+
+    turn = {
+      sessionId,
+      generation: deps.session.getSessionGeneration(sessionId),
+      primary,
+      messageText,
+      assistantMessageId,
+      roundId,
+      streamContextMessageId,
+      model,
+      providerId,
+      correlation: {
+        conversationId: sessionId,
+        roundId,
+        // A round without a chat send does not count as a user turn.
+        turnIndex: existingSessionMessages.filter(message => message.role === 'user').length + 1,
       },
-      contexts: deps.context.snapshot(),
-      composedMessage: [],
-      input: options.input,
+      streamContext: {
+        turnId: roundId,
+        message: { role: 'user', content: messageText, createdAt: sendingCreatedAt, id: streamContextMessageId },
+        contexts: deps.context.snapshot(),
+        composedMessage: [],
+        input: primary?.options.input,
+      },
+      building: { role: 'assistant', content: '', slices: [], tool_results: [], createdAt: now(), id: assistantMessageId },
+      hasVoice,
+      sendSource: hasVoice ? 'voice' : 'text',
+      // Activation measures whether a conversation reaches its first assistant
+      // response. Later turns still emit message and latency telemetry, but they
+      // must not inflate the one-time activation milestones.
+      isActivationAttempt: !existingSessionMessages.some(message => message.role === 'assistant' && !message.interrupted),
+      roundStartedAt: monotonicNow(),
+      llmRequestStartedAt: 0,
+      llmFirstTokenEmitted: false,
+      fullText: '',
+      sessionMessagesForSend: [],
     }
+
+    return {
+      model,
+      chatProvider: primary?.options.chatProvider ?? fallback!.chatProvider,
+      providerId,
+      // The conversation comes from the stored session, which already holds the system prompt.
+      systemPrompt: '',
+      tools: primary ? primary.options.tools : fallback!.tools,
+      headers: (primary?.options.providerConfig?.headers ?? fallback?.headers ?? {}) as Record<string, string>,
+      temperature: primary ? primary.options.temperature : fallback!.temperature,
+      topP: primary ? primary.options.topP : fallback!.topP,
+      correlation: { conversationId: sessionId, turnId: roundId },
+    }
+  }
+
+  /** Stores the user messages of the batch and prepares the stream. Runs before the conversation is built. */
+  async function onTurnStarted(batch: AgentEvent[]) {
+    const state = turn!
+    const { sessionId, primary } = state
+    deps.session.ensureSession(sessionId)
+    ingestRuntimeContexts()
+    state.streamContext.contexts = deps.context.snapshot()
+
+    for (const event of batch)
+      removePendingSendOf(event)
+
     deps.onLifecycle?.({
       phase: 'before-compose',
       channel: 'chat',
       sessionId,
-      textPreview: sendingMessage,
-      details: {
-        contexts: streamingMessageContext.contexts,
-      },
+      textPreview: state.messageText,
+      details: { contexts: state.streamContext.contexts },
     })
 
-    const isStaleGeneration = () => deps.session.getSessionGeneration(sessionId) !== generation
-    const shouldAbort = () => isStaleGeneration() || abortSignal.aborted
-    if (shouldAbort())
+    if (isStaleGeneration(state))
       return
 
-    const buildingMessage: StreamingAssistantMessage = {
-      role: 'assistant',
-      content: '',
-      slices: [],
-      tool_results: [],
-      createdAt: now(),
-      id: assistantMessageId,
-    }
-    beginStream(sessionId, buildingMessage)
-    const hasVoice = options.input?.type === 'input:voice'
-      || options.input?.type === 'input:text:voice'
-    const sendSource = hasVoice ? 'voice' : 'text'
-    // The user message is the durable start of a round, so its ID also serves
-    // as the correlation key for every telemetry milestone emitted by it.
-    const correlation: ChatRoundCorrelation = {
-      conversationId: sessionId,
-      roundId,
-      turnIndex,
-    }
+    beginStream(sessionId, state.building)
     deps.onTrackFirstMessage?.()
-    if (isActivationAttempt) {
-      deps.onChatActivationStarted?.({
-        ...correlation,
-        source: sendSource,
-        model: options.model,
-        provider: activeProvider,
-      })
+    if (primary) {
+      if (state.isActivationAttempt) {
+        deps.onChatActivationStarted?.({
+          ...state.correlation,
+          source: state.sendSource,
+          model: state.model,
+          provider: state.providerId,
+        })
+      }
+      deps.onMessageSendStarted?.({ ...state.correlation, source: state.sendSource, model: state.model })
     }
-    deps.onMessageSendStarted?.({
-      ...correlation,
-      source: sendSource,
-      model: options.model,
-    })
-    const roundStartedAt = monotonicNow()
-    let assistantStored = false
-    let generationCompleted = false
 
-    try {
-      await hooks.emitBeforeMessageComposedHooks(sendingMessage, streamingMessageContext)
+    await hooks.emitBeforeMessageComposedHooks(state.messageText, state.streamContext)
 
-      const contentParts: CommonContentPart[] = [{ type: 'text', text: sendingMessage }]
+    if (!state.streamContext.input) {
+      state.streamContext.input = { type: 'input:text', data: { text: state.messageText } }
+    }
 
-      if (options.attachments) {
-        for (const attachment of options.attachments) {
-          if (attachment.type === 'image') {
-            contentParts.push({
-              type: 'image_url',
-              image_url: {
-                url: `data:${attachment.mimeType};base64,${attachment.data}`,
-              },
-            })
-          }
-        }
-      }
+    if (isStaleGeneration(state))
+      return
 
-      const finalContent = contentParts.length > 1 ? contentParts : sendingMessage
-      if (!streamingMessageContext.input) {
-        streamingMessageContext.input = {
-          type: 'input:text',
-          data: {
-            text: sendingMessage,
-          },
-        }
-      }
+    const replyToMessageId = resolveReplyTargetId(primary?.options.replyToMessageId, deps.session.getSessionMessages(sessionId))
+    if (replyToMessageId)
+      state.streamContext.message.replyToMessageId = replyToMessageId
+    else
+      delete state.streamContext.message.replyToMessageId
 
-      if (shouldAbort())
-        return
+    for (const event of batch) {
+      if (persistedEvents.has(event.id))
+        continue
 
-      replyToMessageId = resolveReplyTargetId(
-        options.replyToMessageId,
-        deps.session.getSessionMessages(sessionId),
-      )
-      if (replyToMessageId)
-        streamingMessageContext.message.replyToMessageId = replyToMessageId
-      else
-        delete streamingMessageContext.message.replyToMessageId
-
-      const userMessage = {
-        role: 'user' as const,
-        content: finalContent,
-        createdAt: sendingCreatedAt,
-        id: roundId,
-        ...(replyToMessageId ? { replyToMessageId } : {}),
-        ...(options.toolReferences?.length ? { tools: options.toolReferences } : {}),
-      }
-      deps.session.appendSessionMessage(sessionId, userMessage)
+      const send = sendOf(event)
+      const isPrimary = send !== undefined && send === primary
+      const message = userMessageFrom(event, isPrimary ? state.roundId : event.id, isPrimary ? replyToMessageId : undefined, isPrimary ? state.streamContext.message.createdAt! : now())
+      deps.session.appendSessionMessage(sessionId, message)
+      persistedEvents.add(event.id)
 
       // Cloud sync v1: only the raw text part round-trips; image attachments
       // and other non-text parts stay local.
-      deps.onUserMessageAppended?.({
-        sessionId,
-        message: userMessage,
-        messageText: sendingMessage,
-        source: sendSource,
-        model: options.model,
-        provider: activeProvider,
-        roundId,
-        turnIndex,
-      })
+      if (isPrimary && primary) {
+        deps.onUserMessageAppended?.({
+          sessionId,
+          message: message as Extract<ChatHistoryItem, { role: 'user' }> & { id: string },
+          messageText: primary.sendingMessage,
+          source: state.sendSource,
+          model: state.model,
+          provider: state.providerId,
+          roundId: state.roundId,
+          turnIndex: state.correlation.turnIndex,
+        })
+      }
+    }
 
-      const sessionMessagesForSend = deps.session.getSessionMessages(sessionId)
-      deps.onUserTurnReady?.({
-        messageText: sendingMessage,
-        sessionMessages: sessionMessagesForSend,
-      })
+    state.sessionMessagesForSend = deps.session.getSessionMessages(sessionId)
+    deps.onUserTurnReady?.({ messageText: state.messageText, sessionMessages: state.sessionMessagesForSend })
 
-      const categorizer = createStreamingCategorizer(deps.getActiveProvider())
-      let streamPosition = 0
+    const categorizer = createStreamingCategorizer(deps.getActiveProvider())
+    let streamPosition = 0
 
-      const parser = useLlmmarkerParser({
-        onLiteral: async (literal) => {
-          if (shouldAbort())
+    state.parser = useLlmmarkerParser({
+      onLiteral: async (literal) => {
+        if (isStaleGeneration(state))
+          return
+
+        categorizer.consume(literal)
+
+        const speechOnly = categorizer.filterToSpeech(literal, streamPosition)
+        streamPosition += literal.length
+
+        if (speechOnly.trim()) {
+          state.building.content += speechOnly
+
+          await hooks.emitTokenLiteralHooks(speechOnly, state.streamContext)
+
+          const lastSlice = state.building.slices.at(-1)
+          if (lastSlice?.type === 'text')
+            lastSlice.text += speechOnly
+          else
+            state.building.slices.push({ type: 'text', text: speechOnly })
+          updateStream(sessionId, state.building)
+        }
+      },
+      onSpecial: async (special) => {
+        if (isStaleGeneration(state))
+          return
+
+        await hooks.emitTokenSpecialHooks(special, state.streamContext)
+      },
+      onEnd: async (fullText) => {
+        if (isStaleGeneration(state))
+          return
+
+        const finalCategorization = categorizeResponse(fullText, deps.getActiveProvider())
+
+        const reasoningContentField = state.building.categorization?.reasoning?.trim()
+        state.building.categorization = {
+          speech: finalCategorization.speech,
+          reasoning: reasoningContentField || finalCategorization.reasoning,
+        }
+        updateStream(sessionId, state.building)
+      },
+      // The parser keeps its own marker-safety tail. Emit each safe literal
+      // chunk so slow providers update the chat before they reach 24 characters.
+      minLiteralEmitLength: 1,
+    })
+
+    state.toolCallQueue = createQueue<ChatSlices>({
+      handlers: [
+        async (ctx) => {
+          if (isStaleGeneration(state))
             return
+          if (ctx.data.type === 'tool-call') {
+            state.building.slices.push(ctx.data)
+            updateStream(sessionId, state.building)
+            return
+          }
 
-          categorizer.consume(literal)
-
-          const speechOnly = categorizer.filterToSpeech(literal, streamPosition)
-          streamPosition += literal.length
-
-          if (speechOnly.trim()) {
-            buildingMessage.content += speechOnly
-
-            await hooks.emitTokenLiteralHooks(speechOnly, streamingMessageContext)
-
-            const lastSlice = buildingMessage.slices.at(-1)
-            if (lastSlice?.type === 'text') {
-              lastSlice.text += speechOnly
-            }
-            else {
-              buildingMessage.slices.push({
-                type: 'text',
-                text: speechOnly,
-              })
-            }
-            updateStream(sessionId, buildingMessage)
+          if (ctx.data.type === 'tool-call-result') {
+            state.building.tool_results.push(ctx.data)
+            updateStream(sessionId, state.building)
           }
         },
-        onSpecial: async (special) => {
-          if (shouldAbort())
-            return
+      ],
+    })
+  }
 
-          await hooks.emitTokenSpecialHooks(special, streamingMessageContext)
-        },
-        onEnd: async (fullText) => {
-          if (isStaleGeneration())
-            return
+  function removePendingSendOf(event: AgentEvent) {
+    const send = sendOf(event)
+    if (send)
+      removePendingSend(send)
+  }
 
-          const finalCategorization = categorizeResponse(fullText, deps.getActiveProvider())
+  /** Composes the request conversation from the stored session and runs the pre-send hooks. */
+  async function buildConversation(): Promise<Conversation> {
+    const state = turn!
+    const { sessionId } = state
+    const context = buildContext(state.sessionMessagesForSend)
+    const systemPromptSupplement = deps.getSystemPromptSupplement?.()?.trim()
+    if (systemPromptSupplement) {
+      const systemMessage = context.turns.find(item => item.type === 'system' && item.authority === 'system')
+      if (systemMessage?.type === 'system')
+        systemMessage.content.push({ type: 'text', text: `\n\n${systemPromptSupplement}` })
+      else
+        context.turns.unshift({ id: 'system-supplement', type: 'system', authority: 'system', content: [{ type: 'text', text: systemPromptSupplement }] })
+    }
 
-          const reasoningContentField = buildingMessage.categorization?.reasoning?.trim()
-          buildingMessage.categorization = {
-            speech: finalCategorization.speech,
-            reasoning: reasoningContentField || finalCategorization.reasoning,
-          }
-          updateStream(sessionId, buildingMessage)
-        },
-        // The parser keeps its own marker-safety tail. Emit each safe literal
-        // chunk so slow providers update the chat before they reach 24 characters.
-        minLiteralEmitLength: 1,
-      })
+    const contextsSnapshot = deps.context.snapshot()
+    const entries = Object.entries(contextsSnapshot).flatMap(([source, messages]) => messages.map(message => ({ source, text: message.text })))
+    if (entries.length) {
+      const lastMessage = context.turns.at(-1)
+      if (lastMessage?.type === 'user')
+        lastMessage.content.push({ type: 'runtime-context', entries })
+      deps.onLifecycle?.({ phase: 'prompt-context-built', channel: 'chat', sessionId, details: { contexts: contextsSnapshot } })
+    }
 
-      const toolCallQueue = createQueue<ChatSlices>({
-        handlers: [
-          async (ctx) => {
-            if (shouldAbort())
-              return
-            if (ctx.data.type === 'tool-call') {
-              buildingMessage.slices.push(ctx.data)
-              updateStream(sessionId, buildingMessage)
-              return
-            }
+    // Hooks, diagnostics, and the plugin bridge consume a display projection. It contains
+    // no native continuation state and never becomes a provider request.
+    state.streamContext.composedMessage = renderConversationPreview(context)
+    deps.onPromptProjection?.({
+      sessionId,
+      message: state.messageText,
+      contexts: contextsSnapshot,
+      composedMessage: state.streamContext.composedMessage,
+    })
+    deps.onLifecycle?.({
+      phase: 'after-compose',
+      channel: 'chat',
+      sessionId,
+      textPreview: state.messageText,
+      details: { composedMessage: state.streamContext.composedMessage },
+    })
 
-            if (ctx.data.type === 'tool-call-result') {
-              buildingMessage.tool_results.push(ctx.data)
-              updateStream(sessionId, buildingMessage)
-            }
-          },
-        ],
-      })
+    await hooks.emitAfterMessageComposedHooks(state.messageText, state.streamContext)
+    await hooks.emitBeforeSendHooks(state.messageText, state.streamContext)
 
-      const context = buildContext(sessionMessagesForSend)
-      const systemPromptSupplement = deps.getSystemPromptSupplement?.()?.trim()
-      if (systemPromptSupplement) {
-        const systemMessage = context.turns.find(turn => turn.type === 'system' && turn.authority === 'system')
-        if (systemMessage?.type === 'system')
-          systemMessage.content.push({ type: 'text', text: `\n\n${systemPromptSupplement}` })
-        else
-          context.turns.unshift({ id: 'system-supplement', type: 'system', authority: 'system', content: [{ type: 'text', text: systemPromptSupplement }] })
-      }
-
-      const contextsSnapshot = deps.context.snapshot()
-      const entries = Object.entries(contextsSnapshot).flatMap(([source, messages]) => messages.map(message => ({ source, text: message.text })))
-      if (entries.length) {
-        const lastMessage = context.turns.at(-1)
-        if (lastMessage?.type === 'user')
-          lastMessage.content.push({ type: 'runtime-context', entries })
-        deps.onLifecycle?.({ phase: 'prompt-context-built', channel: 'chat', sessionId, details: { contexts: contextsSnapshot } })
-      }
-
-      // Hooks, diagnostics, and the plugin bridge consume a display projection. It contains
-      // no native continuation state and never becomes a provider request.
-      streamingMessageContext.composedMessage = renderConversationPreview(context)
-      deps.onPromptProjection?.({
-        sessionId,
-        message: sendingMessage,
-        contexts: contextsSnapshot,
-        composedMessage: streamingMessageContext.composedMessage,
-      })
-      deps.onLifecycle?.({
-        phase: 'after-compose',
-        channel: 'chat',
-        sessionId,
-        textPreview: sendingMessage,
-        details: { composedMessage: streamingMessageContext.composedMessage },
-      })
-
-      await hooks.emitAfterMessageComposedHooks(sendingMessage, streamingMessageContext)
-      await hooks.emitBeforeSendHooks(sendingMessage, streamingMessageContext)
-
-      let fullText = ''
-      const headers = (options.providerConfig?.headers || {}) as Record<string, string>
-
-      if (shouldAbort())
-        return
-
-      const llmRequestStartedAt = monotonicNow()
-      let llmFirstTokenEmitted = false
-      let generationUsage: LlmUsage = { source: 'unavailable' }
-      let generatedTurn: AssistantTurn | undefined
+    state.llmRequestStartedAt = monotonicNow()
+    if (state.primary) {
       deps.onLlmRequestStarted?.({
-        ...correlation,
-        model: options.model,
+        ...state.correlation,
+        model: state.model,
         provider: deps.getActiveProvider() || 'unknown',
-        hasVoice,
+        hasVoice: state.hasVoice,
       })
+    }
+    return context
+  }
 
-      await deps.llm.stream(options.model, options.chatProvider, context, {
-        headers,
-        providerId: activeProvider,
-        abortSignal,
-        onGeneratedTurn: (turn) => { generatedTurn = structuredClone(turn) },
-        requestCorrelation: {
-          conversationId: correlation.conversationId,
-          turnId: correlation.roundId,
-        },
-        tools: options.tools,
-        temperature: options.temperature,
-        topP: options.topP,
-        waitForTools: true,
-        onUsage: (usage) => {
-          if (shouldAbort())
-            return
+  async function onStreamEvent(event: StreamEvent) {
+    const state = turn
+    if (!state || isStaleGeneration(state))
+      return
 
-          generationUsage = usage
-          deps.onLlmGeneration?.({
-            ...correlation,
-            model: options.model,
-            provider: activeProvider,
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
-            totalTokens: usage.totalTokens,
-            usageSource: usage.source,
-          })
-        },
-        onStreamEvent: async (event: StreamEvent) => {
-          if (shouldAbort())
-            return
-
-          switch (event.type) {
-            case 'search':
-              buildingMessage.search = { id: event.id, status: event.status }
-              updateStream(sessionId, buildingMessage)
-              break
-            case 'citations':
-              buildingMessage.citations = [...(buildingMessage.citations ?? []), ...event.citations]
-              updateStream(sessionId, buildingMessage)
-              break
-            case 'tool-call':
-              toolCallQueue.enqueue({
-                type: 'tool-call',
-                toolCall: event,
-              })
-
-              break
-            case 'tool-result':
-              toolCallQueue.enqueue({
-                type: 'tool-call-result',
-                id: event.toolCallId,
-                result: event.result,
-              })
-
-              break
-            case 'tool-error':
-              toolCallQueue.enqueue({
-                type: 'tool-call-result',
-                id: event.toolCallId,
-                isError: true,
-                result: event.result,
-              })
-
-              break
-            case 'text-delta':
-              if (!llmFirstTokenEmitted) {
-                llmFirstTokenEmitted = true
-                deps.onLlmFirstToken?.({
-                  ...correlation,
-                  model: options.model,
-                  ttfbMs: Math.round(monotonicNow() - llmRequestStartedAt),
-                })
-              }
-              fullText += event.text
-              await parser.consume(event.text)
-              break
-            case 'reasoning-delta': {
-              if (shouldAbort())
-                return
-
-              const { reasoning = '' } = buildingMessage.categorization ?? {}
-              const nextReasoning = reasoning + event.text
-              buildingMessage.categorization = {
-                speech: typeof buildingMessage.content === 'string' ? buildingMessage.content : '',
-                reasoning: nextReasoning,
-              }
-              const crossesBoundary
-                = Math.floor(nextReasoning.length / REASONING_UI_FLUSH_CHUNK_SIZE)
-                  > Math.floor(reasoning.length / REASONING_UI_FLUSH_CHUNK_SIZE)
-              if (!reasoning || crossesBoundary)
-                updateStream(sessionId, buildingMessage)
-              break
-            }
-            case 'finish':
-              break
-            case 'error':
-              throw event.error ?? new Error('Stream error')
+    const { sessionId, building } = state
+    switch (event.type) {
+      case 'search':
+        building.search = { id: event.id, status: event.status }
+        updateStream(sessionId, building)
+        break
+      case 'citations':
+        building.citations = [...(building.citations ?? []), ...event.citations]
+        updateStream(sessionId, building)
+        break
+      case 'tool-call':
+        state.toolCallQueue?.enqueue({ type: 'tool-call', toolCall: event })
+        break
+      case 'tool-result':
+        state.toolCallQueue?.enqueue({ type: 'tool-call-result', id: event.toolCallId, result: event.result })
+        break
+      case 'tool-error':
+        state.toolCallQueue?.enqueue({ type: 'tool-call-result', id: event.toolCallId, isError: true, result: event.result })
+        break
+      case 'text-delta':
+        if (!state.llmFirstTokenEmitted) {
+          state.llmFirstTokenEmitted = true
+          if (state.primary) {
+            deps.onLlmFirstToken?.({
+              ...state.correlation,
+              model: state.model,
+              ttfbMs: Math.round(monotonicNow() - state.llmRequestStartedAt),
+            })
           }
-        },
-      })
+        }
+        state.fullText += event.text
+        await state.parser?.consume(event.text)
+        break
+      case 'reasoning-delta': {
+        const { reasoning = '' } = building.categorization ?? {}
+        const nextReasoning = reasoning + event.text
+        building.categorization = {
+          speech: typeof building.content === 'string' ? building.content : '',
+          reasoning: nextReasoning,
+        }
+        const crossesBoundary
+          = Math.floor(nextReasoning.length / REASONING_UI_FLUSH_CHUNK_SIZE)
+            > Math.floor(reasoning.length / REASONING_UI_FLUSH_CHUNK_SIZE)
+        if (!reasoning || crossesBoundary)
+          updateStream(sessionId, building)
+        break
+      }
+      case 'finish':
+        break
+      case 'error':
+        throw event.error ?? new Error('Stream error')
+    }
+  }
+
+  /** Records the outcome of the turn that ran. Every outcome ends with the sending flag cleared. */
+  async function onTurnSettled(result: AgentTurnResult) {
+    const state = turn
+    if (!state) {
+      // The turn failed before it had state, for example while no provider is configured. No chat send
+      // can be in such a batch, because a send always carries its own provider.
+      if (result.outcome === 'failed')
+        console.error('Agent turn could not start:', result.error)
+      return
+    }
+
+    const { sessionId, building } = state
+    const chatSends = result.events.flatMap((event) => {
+      const send = sendOf(event)
+      return send ? [send] : []
+    })
+    let assistantStored = false
+
+    try {
+      if (result.outcome === 'preempted') {
+        // The events return to the queue and the next turn answers them. Nothing this turn showed stays.
+        resetForegroundStream(sessionId)
+        return
+      }
+
+      if (result.outcome === 'failed') {
+        if (isStaleGeneration(state))
+          return
+
+        if (hasAssistantOutput(building)) {
+          // Keep received output local, but do not run completion hooks or cloud
+          // sync for an assistant turn that never reached a terminal event.
+          deps.session.appendSessionMessage(sessionId, { ...cloneStreamingMessage(building), interrupted: true })
+        }
+        resetForegroundStream(sessionId)
+
+        console.error('Error sending message:', result.error)
+        if (state.primary) {
+          deps.onMessageRoundFailed?.({
+            ...state.correlation,
+            source: state.sendSource,
+            model: state.model,
+            provider: state.providerId,
+            failureStage: 'llm_response',
+            errorCode: 'llm_response_failed',
+          })
+          if (state.isActivationAttempt) {
+            deps.onChatActivationFailed?.({
+              ...state.correlation,
+              source: state.sendSource,
+              model: state.model,
+              provider: state.providerId,
+              failureStage: 'llm_response',
+              errorCode: 'llm_response_failed',
+            })
+          }
+        }
+        for (const send of chatSends)
+          send.deferred.reject(result.error)
+        return
+      }
+
+      if (result.outcome === 'cancelled') {
+        if (!isStaleGeneration(state) && hasAssistantOutput(building)) {
+          deps.session.appendSessionMessage(sessionId, { ...cloneStreamingMessage(building), interrupted: true })
+          resetForegroundStream(sessionId)
+        }
+        for (const send of chatSends)
+          send.deferred.resolve()
+        return
+      }
 
       // Session generation is the lifecycle correlation key. Re-check it
       // after every awaited completion boundary so deleting a session while a
       // plugin hook runs cannot leak later hooks or success analytics.
-      if (shouldAbort())
+      if (isStaleGeneration(state))
         return
 
-      await parser.end()
-      if (shouldAbort())
+      await state.parser?.end()
+      if (isStaleGeneration(state))
         return
 
-      generationCompleted = true
-      buildingMessage.generationTranscript = generatedTurn
-      try {
-        deps.onAssistantResponseRendered?.({
-          ...correlation,
-          model: options.model,
-          latencyMs: Math.round(monotonicNow() - llmRequestStartedAt),
-        })
-      }
-      catch (error) {
-        console.error('Assistant response observer failed:', error)
+      building.generationTranscript = result.assistantTurn
+      if (state.primary) {
+        try {
+          deps.onAssistantResponseRendered?.({
+            ...state.correlation,
+            model: state.model,
+            latencyMs: Math.round(monotonicNow() - state.llmRequestStartedAt),
+          })
+        }
+        catch (error) {
+          console.error('Assistant response observer failed:', error)
+        }
+        if (result.usage) {
+          deps.onLlmGeneration?.({
+            ...state.correlation,
+            model: state.model,
+            provider: state.providerId,
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
+            totalTokens: result.usage.totalTokens,
+            usageSource: result.usage.source,
+          })
+        }
       }
 
-      if (!shouldAbort() && (buildingMessage.slices.length > 0 || generatedTurn?.rounds.length)) {
-        const finalAssistant = buildingMessage
-        deps.session.appendSessionMessage(sessionId, finalAssistant)
+      if (building.slices.length > 0 || result.assistantTurn?.rounds.length) {
+        deps.session.appendSessionMessage(sessionId, building)
         assistantStored = true
-        deps.onAssistantMessageAppended?.({
-          sessionId,
-          message: finalAssistant,
-          messageText: fullText,
-        })
+        deps.onAssistantMessageAppended?.({ sessionId, message: building, messageText: state.fullText })
       }
 
-      if (shouldAbort())
-        return
-      await hooks.emitStreamEndHooks(streamingMessageContext)
-      if (shouldAbort())
-        return
-      await hooks.emitAssistantResponseEndHooks(fullText, streamingMessageContext)
-
-      if (shouldAbort())
-        return
-      await hooks.emitAfterSendHooks(sendingMessage, streamingMessageContext)
-      if (shouldAbort())
-        return
-      await hooks.emitAssistantMessageHooks({ ...buildingMessage }, fullText, streamingMessageContext)
-      if (shouldAbort())
-        return
+      await hooks.emitStreamEndHooks(state.streamContext)
+      await hooks.emitAssistantResponseEndHooks(state.fullText, state.streamContext)
+      await hooks.emitAfterSendHooks(state.messageText, state.streamContext)
+      await hooks.emitAssistantMessageHooks({ ...building }, state.fullText, state.streamContext)
       await hooks.emitChatTurnCompleteHooks({
-        output: { ...buildingMessage },
-        outputText: fullText,
-        toolCalls: sessionMessagesForSend.filter(msg => msg.role === 'tool') as ToolMessage[],
-      }, streamingMessageContext)
+        output: { ...building },
+        outputText: state.fullText,
+        toolCalls: state.sessionMessagesForSend.filter(msg => msg.role === 'tool') as ToolMessage[],
+      }, state.streamContext)
 
-      if (shouldAbort())
-        return
-      deps.onAssistantTurnReady?.({
-        messageText: fullText,
-        sessionMessages: sessionMessagesForSend,
-      })
+      deps.onAssistantTurnReady?.({ messageText: state.fullText, sessionMessages: state.sessionMessagesForSend })
 
       resetForegroundStream(sessionId)
-      const durationMs = Math.round(monotonicNow() - roundStartedAt)
-      deps.onMessageRound?.({
-        ...correlation,
-        durationMs,
-        hasVoice,
-        model: options.model,
-        inputTokens: generationUsage.inputTokens,
-        outputTokens: generationUsage.outputTokens,
-        totalTokens: generationUsage.totalTokens,
-        usageSource: generationUsage.source,
-      })
-      if (isActivationAttempt) {
-        deps.onChatActivationSucceeded?.({
-          ...correlation,
+      if (state.primary) {
+        const durationMs = Math.round(monotonicNow() - state.roundStartedAt)
+        deps.onMessageRound?.({
+          ...state.correlation,
           durationMs,
-          source: sendSource,
-          model: options.model,
-          provider: activeProvider,
+          hasVoice: state.hasVoice,
+          model: state.model,
+          inputTokens: result.usage?.inputTokens,
+          outputTokens: result.usage?.outputTokens,
+          totalTokens: result.usage?.totalTokens,
+          usageSource: result.usage?.source ?? 'unavailable',
         })
+        if (state.isActivationAttempt) {
+          deps.onChatActivationSucceeded?.({
+            ...state.correlation,
+            durationMs,
+            source: state.sendSource,
+            model: state.model,
+            provider: state.providerId,
+          })
+        }
       }
+      for (const send of chatSends)
+        send.deferred.resolve()
     }
     catch (error) {
-      if (shouldAbort())
-        return
-
-      if (!assistantStored && !generationCompleted && hasAssistantOutput(buildingMessage)) {
-        // Keep received output local, but do not run completion hooks or cloud
-        // sync for an assistant turn that never reached a terminal event.
-        deps.session.appendSessionMessage(sessionId, { ...cloneStreamingMessage(buildingMessage), interrupted: true })
-      }
-      resetForegroundStream(sessionId)
-
+      // A hook or observer failed after generation. The send fails the same way a stream error does.
+      if (!assistantStored)
+        resetForegroundStream(sessionId)
       console.error('Error sending message:', error)
-      deps.onMessageRoundFailed?.({
-        ...correlation,
-        source: sendSource,
-        model: options.model,
-        provider: activeProvider,
-        failureStage: 'llm_response',
-        errorCode: 'llm_response_failed',
-      })
-      if (isActivationAttempt) {
-        deps.onChatActivationFailed?.({
-          ...correlation,
-          source: sendSource,
-          model: options.model,
-          provider: activeProvider,
-          failureStage: 'llm_response',
-          errorCode: 'llm_response_failed',
-        })
-      }
-      throw error
+      for (const send of chatSends)
+        send.deferred.reject(error)
     }
     finally {
-      if (!assistantStored
-        && !generationCompleted
-        && abortSignal.aborted
-        && !isStaleGeneration()
-        && hasAssistantOutput(buildingMessage)) {
-        deps.session.appendSessionMessage(sessionId, { ...cloneStreamingMessage(buildingMessage), interrupted: true })
-        resetForegroundStream(sessionId)
+      // A stale session leaves its sends unresolved above. Settle them so callers never hang.
+      if (isStaleGeneration(state)) {
+        for (const send of chatSends)
+          send.deferred.resolve()
       }
+      turn = undefined
       setSending(false)
       deps.onSendSettled?.({ sessionId })
     }
   }
 
-  const sendQueue = createQueue<QueuedSend>({
-    handlers: [
-      async ({ data }) => {
-        const { sendingMessage, options, generation, deferred, sessionId, cancelled, providerId } = data
-
-        if (cancelled)
-          return
-
-        if (deps.session.getSessionGeneration(sessionId) !== generation) {
-          deferred.reject(new Error('Chat session was reset before send could start'))
-          return
-        }
-
-        const controller = new AbortController()
-        activeSends.set(sessionId, controller)
-        try {
-          await performSend(sendingMessage, options, generation, sessionId, controller.signal, providerId)
-          deferred.resolve()
-        }
-        catch (error) {
-          deferred.reject(error)
-        }
-        finally {
-          activeSends.delete(sessionId)
-        }
-      },
-    ],
+  const loop = new AgentLoop({
+    llm: deps.llm,
+    resolveRequest,
+    buildConversation,
+    selectEvents,
+    isStale: (event) => {
+      const send = sendOf(event)
+      return send !== undefined && isStaleSend(send)
+    },
+    onDiscarded: (events) => {
+      for (const event of events) {
+        const send = sendOf(event)
+        if (!send)
+          continue
+        removePendingSend(send)
+        // A cancelled send was already rejected by `cancelPendingSends`.
+        if (!send.cancelled)
+          send.deferred.reject(new Error('Chat session was reset before send could start'))
+      }
+    },
+    onTurnStarted,
+    onStreamEvent,
+    onTurnSettled,
+    bus: deps.bus,
+    heartbeatMs: deps.heartbeatMs,
+    spendGuard: deps.spendGuard,
+    maxReceiptChars: deps.maxReceiptChars,
+    now,
   })
-
-  sendQueue.on('enqueue', (queuedSend) => {
-    pendingQueuedSends.push(queuedSend)
-    emitStateChange()
-  })
-
-  sendQueue.on('dequeue', (queuedSend) => {
-    pendingQueuedSends = pendingQueuedSends.filter(item => item !== queuedSend)
-    emitStateChange()
-  })
+  loop.start()
 
   function ingest(
     sendingMessage: string,
     options: ChatOrchestratorSendOptions,
     targetSessionId?: string,
   ) {
+    if (!sendingMessage && !options.attachments?.length)
+      return Promise.resolve()
+
     const sessionId = targetSessionId || deps.getActiveSessionId()
     const generation = deps.session.getSessionGeneration(sessionId)
 
     return new Promise<void>((resolve, reject) => {
-      sendQueue.enqueue({
+      const send: QueuedSend = {
         providerId: deps.getActiveProvider?.() ?? '',
         sendingMessage,
         options,
         generation,
         sessionId,
         deferred: { resolve, reject },
-      })
+      }
+      pendingQueuedSends.push(send)
+      emitStateChange()
+      // Chat is the one input that always wakes the agent at once.
+      loop.push({ type: 'chat.message', source: 'chat', text: sendingMessage, meta: { send } }, { trigger: 'flush' })
     })
   }
 
+  function pushEvent(input: AgentEventInput, options?: { trigger?: TriggerMode }) {
+    return loop.push(input, options)
+  }
+
   function cancelPendingSends(sessionId?: string) {
-    for (const [activeSessionId, controller] of activeSends) {
-      if (!sessionId || sessionId === activeSessionId)
-        controller.abort(new Error('Chat session send was cancelled'))
-    }
+    const matches = (send: QueuedSend) => !sessionId || send.sessionId === sessionId
+    loop.interrupt((event) => {
+      const send = sendOf(event)
+      return send !== undefined && matches(send)
+    })
 
     for (const queued of pendingQueuedSends) {
-      if (sessionId && queued.sessionId !== sessionId)
+      if (!matches(queued))
         continue
 
       queued.cancelled = true
       queued.deferred.reject(new Error('Chat session was reset before send could start'))
     }
 
-    pendingQueuedSends = sessionId
-      ? pendingQueuedSends.filter(item => item.sessionId !== sessionId)
-      : []
+    pendingQueuedSends = pendingQueuedSends.filter(item => !matches(item))
     emitStateChange()
   }
 
@@ -1135,11 +1227,13 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
 
   return {
     ingest,
+    pushEvent,
     cancelPendingSends,
     getPendingQueuedSendSnapshot,
     getPendingQueuedSendCount: () => pendingQueuedSends.length,
     getSending: () => sending,
     setSending,
+    stop: () => loop.stop(),
     hooks,
   }
 }

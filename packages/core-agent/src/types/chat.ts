@@ -82,6 +82,11 @@ export type ChatHistoryItem = (ChatMessage | ErrorMessage) & {
   replyToMessageId?: string
   /** Tools selected for this message. The runtime rebuilds executors from these names. */
   tools?: ChatToolReference[]
+  /**
+   * Set on a user message that stores a plugin or heartbeat event. The agent reads it as a user turn.
+   * The chat UI does not show it as something the user typed.
+   */
+  agentEvent?: { type: string, source: string }
 }
 
 export interface ChatStreamEventContext {

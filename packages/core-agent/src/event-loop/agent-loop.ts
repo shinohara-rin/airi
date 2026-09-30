@@ -20,6 +20,8 @@ export interface AgentRequest {
   headers?: Record<string, string>
   temperature?: number
   topP?: number
+  /** Identifies this request to the provider and to observers. @default `{ conversationId: 'agent', turnId: <first event id> }` */
+  correlation?: { conversationId: string, turnId: string }
 }
 
 /** What observers see when one turn settles. */
@@ -29,7 +31,11 @@ export interface AgentTurnResult {
   /** Absent when the turn was cancelled or failed. */
   assistantTurn?: AssistantTurn
   text: string
-  outcome: 'completed' | 'preempted' | 'failed'
+  /**
+   * `preempted` events went back to the queue and will be answered by a later turn. `cancelled` events are
+   * discarded: the application interrupted the turn or the loop stopped.
+   */
+  outcome: 'completed' | 'preempted' | 'cancelled' | 'failed'
   error?: unknown
   usage?: LlmUsage
   /** The user turn the loop built, absent when `buildConversation` supplied the conversation. */
@@ -45,8 +51,15 @@ export interface AgentLoopOptions {
    * Without it, the loop keeps an in-memory history and renders each batch as one user turn.
    */
   buildConversation?: (batch: AgentEvent[], request: AgentRequest) => Conversation | Promise<Conversation>
-  /** Runs before the request. Return `false` to drop the batch, for example when its session was reset. */
-  shouldRun?: (batch: AgentEvent[]) => boolean
+  /** Events that must not be answered any more, for example because their session was reset. They are dropped at delivery. */
+  isStale?: (event: AgentEvent) => boolean
+  /** Called with the events `isStale` dropped. */
+  onDiscarded?: (events: AgentEvent[]) => void
+  /**
+   * Chooses the events one turn answers. The rest go back to the front of the queue for the next turn.
+   * Use it when events belong to different conversations that cannot share a request.
+   */
+  selectEvents?: (batch: AgentEvent[]) => AgentEvent[]
   /** Called for each streamed event of the running turn, in order. Text deltas here are the agent's speech. */
   onStreamEvent?: (event: StreamEvent, batch: AgentEvent[]) => void | Promise<void>
   /** Runs after the request is resolved and before the model is called. */
@@ -74,6 +87,13 @@ const DEFAULT_BUS: WakeBusOptions = {
   minBatchAgeMs: 500,
   maxBatchAgeMs: 6000,
   maxBatchSize: 8,
+}
+
+/** The reason of an abort that wants the events answered again, as opposed to discarded. */
+class TurnPreempted extends Error {
+  constructor() {
+    super('Agent turn was preempted')
+  }
 }
 
 function defaultCreateId() {
@@ -162,9 +182,16 @@ export class AgentLoop {
     this.bus.setPaused(paused)
   }
 
-  /** Cancels the running turn, whatever it has produced, and puts its events back in the queue. */
-  interrupt() {
-    this.active?.controller.abort(new Error('Agent turn was interrupted'))
+  /**
+   * Cancels the running turn, whatever it has produced. Its events are discarded.
+   * Pass `matches` to cancel only a turn that answers a matching event.
+   */
+  interrupt(matches?: (event: AgentEvent) => boolean) {
+    if (!this.active)
+      return
+    if (matches && !this.active.batch.some(matches))
+      return
+    this.active.controller.abort(new Error('Agent turn was interrupted'))
   }
 
   start() {
@@ -205,7 +232,7 @@ export class AgentLoop {
   /** A turn that already spoke or called a tool has visible effects, so a preempt waits for it to finish. */
   private cancelIfNotExternalized() {
     if (this.active && !this.active.externalized)
-      this.active.controller.abort(new Error('Agent turn was preempted'))
+      this.active.controller.abort(new TurnPreempted())
   }
 
   private async run() {
@@ -226,7 +253,20 @@ export class AgentLoop {
     return { type: 'user', id: this.createId(), content }
   }
 
-  private async runTurn(batch: AgentEvent[]) {
+  private async runTurn(delivered: AgentEvent[]) {
+    const stale = delivered.filter(event => this.options.isStale?.(event))
+    if (stale.length > 0)
+      this.options.onDiscarded?.(stale)
+
+    const live = delivered.filter(event => !stale.includes(event))
+    const batch = this.options.selectEvents?.(live) ?? live
+    // The events this turn does not answer wait at the front of the queue, before newer ones.
+    const rest = live.filter(event => !batch.includes(event))
+    if (rest.length > 0)
+      this.bus.requeue(rest)
+    if (batch.length === 0)
+      return
+
     const controller = new AbortController()
     const active = { controller, batch, externalized: false }
     this.active = active
@@ -236,9 +276,6 @@ export class AgentLoop {
     let assistantTurn: AssistantTurn | undefined
 
     try {
-      if (this.options.shouldRun?.(batch) === false)
-        return
-
       const request = await this.options.resolveRequest(batch)
       await this.options.onTurnStarted?.(batch)
 
@@ -262,7 +299,7 @@ export class AgentLoop {
         topP: request.topP,
         tools: this.limitReceipts(request.tools),
         waitForTools: true,
-        requestCorrelation: { conversationId: 'agent', turnId: userTurn?.id ?? batch[0]?.id ?? this.createId() },
+        requestCorrelation: request.correlation ?? { conversationId: 'agent', turnId: userTurn?.id ?? batch[0]?.id ?? this.createId() },
         onGeneratedTurn: (turn) => { assistantTurn = structuredClone(turn) },
         onUsage: (value) => { usage = value },
         onStreamEvent: async (event) => {
@@ -293,10 +330,13 @@ export class AgentLoop {
       await this.settle({ events: batch, assistantTurn, text, outcome: 'completed', usage, userTurn })
     }
     catch (error) {
-      if (controller.signal.aborted && this.running) {
-        // Preempted or interrupted: the events were not answered, so they go back in front of the queue.
+      if (controller.signal.aborted && controller.signal.reason instanceof TurnPreempted && this.running) {
+        // Preempted: the events were not answered, so they go back in front of the queue.
         this.bus.requeue(batch)
         await this.settle({ events: batch, text, outcome: 'preempted' })
+      }
+      else if (controller.signal.aborted) {
+        await this.settle({ events: batch, text, outcome: 'cancelled' })
       }
       else if (this.running) {
         await this.settle({ events: batch, text, outcome: 'failed', error })
