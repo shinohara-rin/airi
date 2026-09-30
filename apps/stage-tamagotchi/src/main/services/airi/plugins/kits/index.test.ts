@@ -16,6 +16,7 @@ describe('createBuiltInExtensionKitRuntime', () => {
     })
 
     expect(runtime.hostProvidedKits).toEqual([
+      { id: 'kit.agent-events', version: '1.0.0' },
       { id: 'kit.gamelet', version: '1.0.0' },
       { id: 'kit.tool', version: '1.0.0' },
       { id: 'kit.widget', version: '1.0.0' },

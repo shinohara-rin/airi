@@ -8,6 +8,7 @@ import type { GameletOrchestrationRuntime } from './gamelet/orchestration'
 import { gameletKit, toolKit } from '@proj-airi/plugin-sdk-tamagotchi'
 import { TamagotchiToolRegistry } from '@proj-airi/plugin-sdk-tamagotchi/tools'
 
+import { AgentEventSink, createHostAgentEventsKit } from './agent-events'
 import { gameletPluginKitDescriptor, registerGameletPluginKit } from './gamelet'
 import { createGameletOrchestrationRuntime } from './gamelet/orchestration'
 import { registerWidgetPluginKit, widgetPluginKitDescriptor } from './widget'
@@ -131,16 +132,20 @@ export function createBuiltInExtensionKitRuntime(options: SetupExtensionHostOpti
   registerHostKits: (host: ExtensionHost) => void
   hostProvidedKits: readonly HostProvidedKitDeclaration[]
   tools: TamagotchiToolRegistry
+  agentEvents: AgentEventSink
   dispose: () => void
 } {
   const gamelets = createGameletOrchestrationRuntime(options.widgetsManager)
   const tools = new TamagotchiToolRegistry()
   const toolKitRef = createHostToolKit({ tools })
+  const agentEvents = new AgentEventSink()
+  const agentEventsKitRef = createHostAgentEventsKit({ sink: agentEvents })
   const hostProvidedKits = collectHostProvidedKitDeclarations([
     widgetPluginKitDescriptor,
     gameletPluginKitDescriptor,
     gameletKit,
     toolKitRef,
+    agentEventsKitRef,
   ])
 
   return {
@@ -149,12 +154,15 @@ export function createBuiltInExtensionKitRuntime(options: SetupExtensionHostOpti
       registerGameletPluginKit(host)
       host.registerKitApi(createHostGameletKit({ host, gamelets }))
       host.registerKitApi(toolKitRef)
+      host.registerKitApi(agentEventsKitRef)
     },
     hostProvidedKits,
     tools,
+    agentEvents,
     dispose() {
       gamelets.dispose()
       tools.clear()
+      agentEvents.clear()
     },
   }
 }

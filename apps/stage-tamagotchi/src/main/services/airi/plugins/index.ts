@@ -6,6 +6,7 @@ import { defineInvoke, defineInvokeHandler } from '@moeru/eventa'
 import { createContext } from '@moeru/eventa/adapters/electron/main'
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 
+import { electronPluginAgentEvent } from '../../../../shared/eventa/plugin/agent-events'
 import { electronPluginGetAssetBaseUrl } from '../../../../shared/eventa/plugin/assets'
 import {
   electronPluginUpdateCapability,
@@ -253,6 +254,8 @@ export async function setupExtensionHost(options: SetupExtensionHostOptions): Pr
       }
     }
   })
+
+  hostService.agentEvents.subscribe(event => context.emit(electronPluginAgentEvent, event))
 
   onAppBeforeQuit(() => hostService.dispose())
 

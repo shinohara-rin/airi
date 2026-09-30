@@ -45,6 +45,7 @@ import {
   i18nGetLocale,
   i18nSetLocale,
 } from '../shared/eventa'
+import { electronPluginAgentEvent } from '../shared/eventa/plugin/agent-events'
 import {
   electronPluginUpdateCapability,
   pluginProtocolListProviders,
@@ -260,6 +261,16 @@ function createFullStageRuntime() {
 
   context.value.on(electronPluginToolsChanged, () => {
     void refreshPluginRuntimeTools()
+  })
+
+  // Plugins give the agent events through the main process. This runtime is the only stage renderer, so
+  // each event reaches the agent once. The chat store routes the call to the leader that owns the agent.
+  context.value.on(electronPluginAgentEvent, (event) => {
+    if (!event.body)
+      return
+
+    const { source, type, text, trigger, images, meta } = event.body
+    chatStore.pushAgentEvent({ source, type, text, images, meta, origin: 'external' }, trigger)
   })
 
   return {

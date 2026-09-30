@@ -11,6 +11,7 @@ import type {
   ExtensionAssetSession,
   ExtensionAssetSnapshotService,
 } from '../features/static-assets'
+import type { AgentEventSink } from '../kits/agent-events'
 import type { ExtensionHostService, SetupExtensionHostOptions } from '../types'
 import type { SessionCleanupReport } from './managed-sessions'
 
@@ -98,6 +99,9 @@ function createElectronExtensionAssetCookieAdapter() {
 export interface ExtensionHostServiceInternal extends ExtensionHostService {
   /** Tamagotchi-owned extension tool registry used by IPC tool bridges. */
   tools: TamagotchiToolRegistry
+
+  /** Events that extension modules gave to the agent. The IPC facade forwards them to the stage renderer. */
+  agentEvents: AgentEventSink
 
   /**
    * Applies the main-process system activation state without changing enabled intent.
@@ -672,6 +676,7 @@ export async function setupExtensionHostServiceInternal(
     // the host service also exposes it for IPC listing/invocation. Consider moving registry ownership
     // to this host service and passing it into kit registration as a dependency.
     tools: builtInKitRuntime.tools,
+    agentEvents: builtInKitRuntime.agentEvents,
     manifests: extensionRegistry.listManifests(),
     async prepareDirectoryImport(sourcePath, securityScopedBookmark) {
       await refreshManifests()
