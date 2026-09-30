@@ -77,7 +77,7 @@ export interface AgentLoopOptions {
   /** Estimated tokens of history kept. The oldest whole turns are dropped past it. @default 48000 */
   maxHistoryTokens?: number
   /** Stops debounce and heartbeat wakes while a token budget for a time window is used up. */
-  spendGuard?: { maxTokens: number, windowMs: number }
+  spendGuard?: () => { maxTokens: number, windowMs: number } | undefined
   now?: () => number
   createId?: () => string
 }
@@ -220,7 +220,7 @@ export class AgentLoop {
   }
 
   private spendGuardTripped() {
-    const guard = this.options.spendGuard
+    const guard = this.options.spendGuard?.()
     if (!guard)
       return false
 

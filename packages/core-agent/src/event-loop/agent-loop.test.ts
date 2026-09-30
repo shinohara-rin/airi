@@ -217,7 +217,7 @@ describe('agentLoop', () => {
   it('turns debounce events into piggyback events while the spend guard is tripped, and still answers chat', async () => {
     vi.useFakeTimers()
     const { llm, conversations } = scriptedLlm(say('expensive', 500), say('cheap'))
-    const { loop, settled } = start(llm, { spendGuard: { maxTokens: 100, windowMs: 60_000 } })
+    const { loop, settled } = start(llm, { spendGuard: () => ({ maxTokens: 100, windowMs: 60_000 }) })
 
     loop.push(chat('first'), { trigger: 'flush' })
     await vi.advanceTimersByTimeAsync(10)

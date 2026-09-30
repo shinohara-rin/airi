@@ -366,6 +366,8 @@ export interface ChatOrchestratorRuntimeDeps {
     sessionId: string
     message: StreamingAssistantMessage
     messageText: string
+    /** The round id. The speech pipeline uses it as the turn id of the spoken reply. */
+    roundId: string
   }) => void
   /**
    * Model and provider for a turn that no chat send started, such as a plugin event or a heartbeat.
@@ -377,7 +379,7 @@ export interface ChatOrchestratorRuntimeDeps {
   /** Base heartbeat interval in milliseconds, read at each beat. No value means no heartbeat. */
   heartbeatMs?: () => number | undefined
   /** Stops debounce and heartbeat wakes while a token budget for a time window is used up. */
-  spendGuard?: { maxTokens: number, windowMs: number }
+  spendGuard?: () => { maxTokens: number, windowMs: number } | undefined
   /** Longest tool receipt handed to the model. @default 20000 */
   maxReceiptChars?: number
   /** Called after user turn persistence, before provider prompt composition. */
@@ -660,7 +662,8 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
       streamContext: {
         turnId: roundId,
         message: { role: 'user', content: messageText, createdAt: sendingCreatedAt, id: streamContextMessageId },
-        contexts: deps.context.snapshot(),
+        // Filled in `onTurnStarted`, after the runtime contexts are ingested.
+        contexts: {},
         composedMessage: [],
         input: primary?.options.input,
       },
@@ -1072,7 +1075,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
       if (building.slices.length > 0 || result.assistantTurn?.rounds.length) {
         deps.session.appendSessionMessage(sessionId, building)
         assistantStored = true
-        deps.onAssistantMessageAppended?.({ sessionId, message: building, messageText: state.fullText })
+        deps.onAssistantMessageAppended?.({ sessionId, message: building, messageText: state.fullText, roundId: state.roundId })
       }
 
       await hooks.emitStreamEndHooks(state.streamContext)
