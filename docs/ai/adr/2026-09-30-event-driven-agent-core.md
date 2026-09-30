@@ -24,7 +24,9 @@ Worlds on one Cortico agent. It showed that one agent with an event queue works:
 - `@proj-airi/core-agent` gets one `AgentLoop`. It owns one conversation and one consumer.
   Every source pushes events into a `WakeBus`. The loop takes a batch, runs one turn, and waits.
 - A plugin supplies tools, events, or both. Tools use the existing plugin tool registry. Events use
-  a new events kit. A plugin does not call the model and does not read the conversation.
+  a new agent events kit. The host names the extension as the event source and marks the event
+  external. A plugin does not call the model and does not read the conversation. A plugin that learns
+  its tools late, for example a game plugin, tells the host with `notifyChanged`.
 - Each event has a trigger mode. The producer chooses it.
 
   | Mode | Effect |
@@ -44,21 +46,30 @@ Worlds on one Cortico agent. It showed that one agent with an event queue works:
 - A tool receipt is cut to a limit and says how much it left out.
 - The loop has a spend guard. It stops waking on `debounce` and `heartbeat` when a token budget for a
   time window is used up. Chat still wakes the agent.
-- The new loop replaces `createChatOrchestratorRuntime`. The first version drops queued sends, chat
-  hooks other than the token and marker hooks, Spark notify, and vision input.
+- The chat orchestrator keeps its public surface and its tests. Its send queue is replaced by the
+  loop. A chat send becomes a `flush` event, and the turn runs in the stored chat session. Plugin
+  events and heartbeats run turns in the current session. Their user messages carry an `agentEvent`
+  mark, and the chat view does not show them.
+- The stage reports how spoken playback ended. The chat store remembers the text of each spoken reply
+  by round id, and the speech pipeline reports the end or the cancel of that turn.
+- The airicraft plugin is the first user. It gives the agent the mod's tools and events.
 
 ## Consequences
 
 - One agent decides what to say and what to do. A game plugin supplies tools and events. It has no
   second model behind it.
-- The chat store keeps the session store and the streaming message shape. The UI does not change.
-- Plugins that used `spark:notify` need a port to the events kit. That is follow-up work.
+- The chat store keeps the session store and the streaming message shape. Retry, fork and tool rerun
+  keep working, because the conversation still comes from the stored session.
+- Spark notify, the vision fallback and the chat hooks are unchanged. Plugins that use `spark:notify`
+  can move to the events kit later. That is follow-up work.
 - Heartbeat and speech-end wakes cost tokens. Defaults are conservative and the spend guard bounds
   them.
 
 ## Not in scope
 
-- Context handoff with a summary. The first version drops the oldest whole turns when the estimate
-  passes a limit.
+- Context handoff with a summary. A loop with its own history drops the oldest whole turns when the
+  estimate passes a limit. A chat session keeps its own history rules.
+- A setting page for the heartbeat, the spend guard and the speech end trigger. The values live in
+  the agent loop settings store.
 - Realtime audio transport.
 - Cloud sync of the new event turns.

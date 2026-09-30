@@ -2,6 +2,33 @@
 
 `@proj-airi/core-agent` owns scheduling, context composition, tool rounds, and generation events. Stage applications provide persistence and UI through its ports. Provider registration and configuration belong to `provider-inference`. Authentication and Flux billing belong to the gateway.
 
+## Event loop
+
+`AgentLoop` runs one agent with one conversation. Producers push events with `push`. Each event has a trigger mode, and the producer chooses it.
+
+| Mode | Effect |
+| --- | --- |
+| `preempt` | Delivers now. It cancels a model call that has produced no output. |
+| `flush` | Delivers now with the queued events. |
+| `debounce` | Joins a batch. The batch delivers after a quiet gap, an age limit, or a size limit. |
+| `piggyback` | Waits in the queue and rides with the next batch. It never wakes the agent. |
+
+Each delivered batch runs one turn. A preempted turn returns its events to the queue. An interrupted turn discards them. An optional heartbeat pushes a quiet notice and doubles its interval for each quiet beat, up to eight times. An optional spend guard turns `debounce` events into `piggyback` events while a token budget is used up. Tool receipts are cut to `maxReceiptChars` and say how much they left out.
+
+The loop keeps its own history unless the application passes `buildConversation`. The chat orchestrator does this, so the stored chat session stays the source of the conversation. It also exposes `pushEvent` for plugin events and the stage.
+
+```ts
+const loop = new AgentLoop({
+  llm,
+  resolveRequest: () => ({ model, chatProvider, providerId, systemPrompt }),
+  heartbeatMs: () => 30_000,
+})
+loop.start()
+loop.push({ type: 'game.job_finished', source: 'game', text: 'the mining job finished' }, { trigger: 'flush' })
+```
+
+See `docs/ai/adr/2026-09-30-event-driven-agent-core.md` for the decision.
+
 ## Conversation and protocol projection
 
 `Conversation` contains ordered `Turn` values. `UserTurn` owns user content. `SystemTurn` owns instructions or application context. Its authority distinguishes system instructions, developer instructions, and context data. Application context does not gain instruction authority merely because the application supplied it.
@@ -52,7 +79,7 @@ Realtime transport is not implemented. A future session adapter can project the 
 
 ```sh
 pnpm -F @proj-airi/core-agent typecheck
-pnpm -F @proj-airi/core-agent exec vitest run src/runtime src/messages src/agents/spark-notify
+pnpm -F @proj-airi/core-agent exec vitest run src/runtime src/messages src/event-loop src/agents/spark-notify
 ```
 
 ## Type boundaries
