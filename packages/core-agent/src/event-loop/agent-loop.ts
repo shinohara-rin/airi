@@ -2,8 +2,8 @@ import type { GenerationProvider } from '@proj-airi/provider-inference'
 import type { Tool } from '@xsai/shared-chat'
 
 import type { AgentLLMPort } from '../contracts/llm-port'
-import type { AssistantTurn, InputSegment, Turn } from '../messages/types'
-import type { LlmUsage, StreamEvent } from '../types/llm'
+import type { AssistantTurn, Conversation, InputSegment, Turn } from '../messages/types'
+import type { LlmUsage, StreamEvent, StreamOptions } from '../types/llm'
 import type { AgentEvent, AgentEventInput, PushOptions, TriggerMode, WakeBusOptions } from './types'
 
 import { Heartbeat } from './heartbeat'
@@ -15,7 +15,8 @@ export interface AgentRequest {
   chatProvider: GenerationProvider
   providerId: string
   systemPrompt: string
-  tools?: Tool[]
+  /** A function is resolved when the request starts, so tools registered by earlier turns are included. */
+  tools?: Tool[] | (() => Promise<Tool[] | undefined>)
   headers?: Record<string, string>
   temperature?: number
   topP?: number
@@ -31,14 +32,25 @@ export interface AgentTurnResult {
   outcome: 'completed' | 'preempted' | 'failed'
   error?: unknown
   usage?: LlmUsage
+  /** The user turn the loop built, absent when `buildConversation` supplied the conversation. */
+  userTurn?: Turn
 }
 
 export interface AgentLoopOptions {
   llm: AgentLLMPort
-  resolveRequest: () => AgentRequest | Promise<AgentRequest>
+  resolveRequest: (batch: AgentEvent[]) => AgentRequest | Promise<AgentRequest>
+  /**
+   * Builds the conversation for one batch. Use it when the application owns the history, for example in
+   * stored chat sessions, and has already recorded the events of the batch. The loop then keeps no history.
+   * Without it, the loop keeps an in-memory history and renders each batch as one user turn.
+   */
+  buildConversation?: (batch: AgentEvent[], request: AgentRequest) => Conversation | Promise<Conversation>
+  /** Runs before the request. Return `false` to drop the batch, for example when its session was reset. */
+  shouldRun?: (batch: AgentEvent[]) => boolean
   /** Called for each streamed event of the running turn, in order. Text deltas here are the agent's speech. */
   onStreamEvent?: (event: StreamEvent, batch: AgentEvent[]) => void | Promise<void>
-  onTurnStarted?: (events: AgentEvent[]) => void
+  /** Runs after the request is resolved and before the model is called. */
+  onTurnStarted?: (events: AgentEvent[]) => void | Promise<void>
   onTurnSettled?: (result: AgentTurnResult) => void | Promise<void>
   /** Debounce timing. */
   bus?: Partial<WakeBusOptions>
@@ -219,23 +231,28 @@ export class AgentLoop {
     const active = { controller, batch, externalized: false }
     this.active = active
 
-    let request: AgentRequest
     let text = ''
     let usage: LlmUsage | undefined
     let assistantTurn: AssistantTurn | undefined
 
     try {
-      request = await this.options.resolveRequest()
-      this.options.onTurnStarted?.(batch)
+      if (this.options.shouldRun?.(batch) === false)
+        return
 
-      const userTurn = this.toUserTurn(batch)
-      const conversation = {
-        turns: [
-          { type: 'system', id: 'agent-system', authority: 'system', content: [{ type: 'text', text: request.systemPrompt }] } satisfies Turn,
-          ...this.turns,
-          userTurn,
-        ],
-      }
+      const request = await this.options.resolveRequest(batch)
+      await this.options.onTurnStarted?.(batch)
+
+      const ownsHistory = !this.options.buildConversation
+      const userTurn = ownsHistory ? this.toUserTurn(batch) : undefined
+      const conversation = this.options.buildConversation
+        ? await this.options.buildConversation(batch, request)
+        : {
+            turns: [
+              { type: 'system', id: 'agent-system', authority: 'system', content: [{ type: 'text', text: request.systemPrompt }] } satisfies Turn,
+              ...this.turns,
+              userTurn!,
+            ],
+          }
 
       await this.options.llm.stream(request.model, request.chatProvider, conversation, {
         abortSignal: controller.signal,
@@ -243,9 +260,9 @@ export class AgentLoop {
         providerId: request.providerId,
         temperature: request.temperature,
         topP: request.topP,
-        tools: request.tools?.map(tool => this.withReceiptLimit(tool)),
+        tools: this.limitReceipts(request.tools),
         waitForTools: true,
-        requestCorrelation: { conversationId: 'agent', turnId: userTurn.id },
+        requestCorrelation: { conversationId: 'agent', turnId: userTurn?.id ?? batch[0]?.id ?? this.createId() },
         onGeneratedTurn: (turn) => { assistantTurn = structuredClone(turn) },
         onUsage: (value) => { usage = value },
         onStreamEvent: async (event) => {
@@ -265,13 +282,15 @@ export class AgentLoop {
         throw controller.signal.reason
 
       // The turn settled. Only now does the exchange become history, so a cancelled turn leaves none.
-      this.turns.push(userTurn)
-      if (assistantTurn)
-        this.turns.push(assistantTurn)
-      this.trimHistory()
+      if (userTurn) {
+        this.turns.push(userTurn)
+        if (assistantTurn)
+          this.turns.push(assistantTurn)
+        this.trimHistory()
+      }
       if (usage?.totalTokens)
         this.spend.push({ at: this.now(), tokens: usage.totalTokens })
-      await this.settle({ events: batch, assistantTurn, text, outcome: 'completed', usage })
+      await this.settle({ events: batch, assistantTurn, text, outcome: 'completed', usage, userTurn })
     }
     catch (error) {
       if (controller.signal.aborted && this.running) {
@@ -295,6 +314,12 @@ export class AgentLoop {
     catch (error) {
       console.error('Agent turn observer failed:', error)
     }
+  }
+
+  private limitReceipts(tools: AgentRequest['tools']): StreamOptions['tools'] {
+    if (typeof tools === 'function')
+      return async () => (await tools())?.map(tool => this.withReceiptLimit(tool))
+    return tools?.map(tool => this.withReceiptLimit(tool))
   }
 
   private withReceiptLimit(tool: Tool): Tool {

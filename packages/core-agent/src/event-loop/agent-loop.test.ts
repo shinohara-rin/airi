@@ -248,6 +248,39 @@ describe('agentLoop', () => {
     expect(types[0]).toBe('user')
   })
 
+  it('uses the conversation the application builds and keeps no history of its own', async () => {
+    const { llm, conversations } = scriptedLlm(say('ok'))
+    const { loop, settled } = start(llm, {
+      buildConversation: (batch, request) => ({
+        turns: [
+          { type: 'system', id: 's', authority: 'system', content: [{ type: 'text', text: request.systemPrompt }] },
+          { type: 'user', id: 'u', content: [{ type: 'text', text: `stored: ${batch[0].text}` }] },
+        ],
+      }),
+    })
+
+    loop.push(chat('hi'), { trigger: 'flush' })
+    await waitFor(() => settled.length === 1)
+
+    const user = conversations[0].turns[1]
+    expect(user.type === 'user' && user.content).toEqual([{ type: 'text', text: 'stored: hi' }])
+    expect(loop.history).toEqual([])
+    expect(settled[0].assistantTurn?.type).toBe('assistant')
+  })
+
+  it('drops a batch that shouldRun rejects', async () => {
+    const { llm, conversations } = scriptedLlm(say('ok'))
+    const { loop, settled } = start(llm, { shouldRun: batch => batch[0].text !== 'stale' })
+
+    loop.push(chat('stale'), { trigger: 'flush' })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    loop.push(chat('fresh'), { trigger: 'flush' })
+    await waitFor(() => settled.length === 1)
+
+    expect(conversations).toHaveLength(1)
+    expect(settled[0].events.map(event => event.text)).toEqual(['fresh'])
+  })
+
   it('drops events pushed after stop', async () => {
     const { llm, conversations } = scriptedLlm(say('x'))
     const { loop } = start(llm)
