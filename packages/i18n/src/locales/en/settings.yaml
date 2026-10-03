@@ -766,6 +766,8 @@ pages:
         no-runtime-context: No bot context observed yet
         last-context-seconds: 'Last bot context: {seconds}s ago'
         last-context-stale: 'Last bot context: Stale'
+        runtime-airicraft: 'Runtime: airicraft mod, the body of your character'
+        runtime-minecraft-bot: 'Runtime: Mineflayer bot'
     hearing:
       description: Configure how speech recognition works
       title: Hearing
