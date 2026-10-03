@@ -15,19 +15,39 @@ export interface MinecraftTrafficEntry {
   payload: unknown
 }
 
+/**
+ * Minecraft runtimes that AIRI can observe and command.
+ *
+ * - `airicraft`: the Fabric mod. It is the character's body and has its own planner.
+ * - `minecraft-bot`: the Mineflayer bot in `integrations/minecraft`.
+ */
+export type MinecraftServiceName = 'airicraft' | 'minecraft-bot'
+
 const RUNTIME_CONTEXT_TICK_MS = 1_000
 const MAX_TRAFFIC_ENTRIES = 50
-const MINECRAFT_SERVICE_NAME = 'minecraft-bot'
+const MINECRAFT_SERVICE_NAMES: readonly MinecraftServiceName[] = ['airicraft', 'minecraft-bot']
+/** The airicraft status lane. Its other lanes, such as `chat`, are traffic only. */
+const AIRICRAFT_STATUS_LANE = 'status'
 
 function getEventSourceLabel(event: { metadata?: { source?: MetadataEventSource } }) {
   return getMetadataSourceLabel(event.metadata?.source) ?? 'unknown'
 }
 
-function isMinecraftSource(event: { metadata?: { source?: MetadataEventSource } }) {
-  const sourceLabel = getMetadataSourceLabel(event.metadata?.source)
-  const sourceId = event.metadata?.source?.id
+function toMinecraftServiceName(value?: string): MinecraftServiceName | undefined {
+  return MINECRAFT_SERVICE_NAMES.find(name => name === value)
+}
 
-  return sourceLabel === MINECRAFT_SERVICE_NAME || sourceId === MINECRAFT_SERVICE_NAME
+/**
+ * The Mineflayer bot sends `id: 'minecraft-bot'`. The airicraft mod sends a per-session id under the extension `airicraft`.
+ */
+function minecraftServiceOfSource(source?: MetadataEventSource): MinecraftServiceName | undefined {
+  if (!source)
+    return undefined
+
+  const extensionId = 'extension' in source ? source.extension.id : undefined
+  return toMinecraftServiceName(extensionId)
+    ?? toMinecraftServiceName(source.id)
+    ?? toMinecraftServiceName(getMetadataSourceLabel(source))
 }
 
 function summarizeContextUpdate(event: WebSocketBaseEvent<'context:update', WebSocketEvents['context:update']>) {
@@ -45,8 +65,12 @@ function summarizeSparkCommand(event: WebSocketBaseEvent<'spark:command', WebSoc
   return `${event.data.intent} -> ${destinations}`
 }
 
+function minecraftServiceOfModule(value: { name?: string, identity?: MetadataEventSource }): MinecraftServiceName | undefined {
+  return toMinecraftServiceName(value.name) ?? minecraftServiceOfSource(value.identity)
+}
+
 function isMinecraftModuleIdentity(value: { name?: string, identity?: MetadataEventSource }) {
-  return value.name === MINECRAFT_SERVICE_NAME || getMetadataSourceLabel(value.identity) === MINECRAFT_SERVICE_NAME
+  return minecraftServiceOfModule(value) !== undefined
 }
 
 export const useMinecraftStore = defineStore('minecraft', () => {
@@ -59,6 +83,7 @@ export const useMinecraftStore = defineStore('minecraft', () => {
   const now = ref(Date.now())
   const servicePresent = ref(false)
   const serviceHealthy = ref(false)
+  const serviceName = ref<MinecraftServiceName>()
 
   let disposeContextUpdate: (() => void) | null = null
   let disposeSparkCommand: (() => void) | null = null
@@ -94,14 +119,18 @@ export const useMinecraftStore = defineStore('minecraft', () => {
   }
 
   function handleRuntimeContextUpdate(event: WebSocketBaseEvent<'context:update', WebSocketEvents['context:update']>) {
-    if (!isMinecraftSource(event))
+    const source = minecraftServiceOfSource(event.metadata?.source)
+    if (!source)
       return
 
     if (event.data.lane === 'minecraft:status')
       return
 
-    latestRuntimeContextText.value = event.data.text ?? ''
-    lastRuntimeContextAt.value = Date.now()
+    serviceName.value = source
+    if (source !== 'airicraft' || event.data.lane === AIRICRAFT_STATUS_LANE) {
+      latestRuntimeContextText.value = event.data.text ?? ''
+      lastRuntimeContextAt.value = Date.now()
+    }
 
     pushTrafficEntry({
       type: 'context:update',
@@ -122,6 +151,8 @@ export const useMinecraftStore = defineStore('minecraft', () => {
       return
     }
 
+    serviceName.value = minecraftServiceOfModule(moduleEntry)
+
     if (!wasPresent)
       serviceHealthy.value = true
   }
@@ -130,6 +161,7 @@ export const useMinecraftStore = defineStore('minecraft', () => {
     if (!isMinecraftModuleIdentity(event.data))
       return
 
+    serviceName.value = minecraftServiceOfModule(event.data)
     servicePresent.value = true
     serviceHealthy.value = true
   }
@@ -151,8 +183,10 @@ export const useMinecraftStore = defineStore('minecraft', () => {
   }
 
   function handleSparkCommand(event: WebSocketBaseEvent<'spark:command', WebSocketEvents['spark:command']>) {
+    // A command without destinations is a broadcast, so it also reaches the Minecraft runtime.
     const destinations = Array.isArray(event.data.destinations) ? event.data.destinations : []
-    const isMinecraftTraffic = destinations.includes(MINECRAFT_SERVICE_NAME)
+    const isMinecraftTraffic = destinations.length === 0
+      || destinations.some(destination => toMinecraftServiceName(destination) !== undefined)
 
     if (!isMinecraftTraffic)
       return
@@ -209,6 +243,7 @@ export const useMinecraftStore = defineStore('minecraft', () => {
     lastRuntimeContextAt.value = 0
     servicePresent.value = false
     serviceHealthy.value = false
+    serviceName.value = undefined
     trafficEntries.value = []
     trafficSequence = 0
   }
@@ -223,6 +258,7 @@ export const useMinecraftStore = defineStore('minecraft', () => {
     trafficEntries,
     configured,
     serviceConnected,
+    serviceName,
     runtimeContextAgeMs,
 
     initialize,

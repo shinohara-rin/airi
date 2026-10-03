@@ -109,13 +109,12 @@ async function resolveSparkCommandTools(sparkCommandTools?: ToolSource): Promise
 
   const modsServerChannelStore = useModsServerChannelStore()
   const sendSparkCommand = (command: WebSocketEvents['spark:command']) => {
-    // TODO(@nekomeowww): instruct the LLM to understand what destination is.
-    // Currently without skill like prompt injection, many issues occur.
-    // destination mostly are wrong or hallucinated, we need to find a way to make it more reliable.
-    //
-    // For now, since destinations as array will always broadcast to all connected modules/agents, we can set it to
-    // empty array to avoid wrong routing.
-    command.destinations = []
+    // NOTICE:
+    // The LLM often invents destinations, so the command goes to every module.
+    // The server sends an empty list to no peer. It broadcasts only without the field.
+    // Source: `matchesDestinations` in server-runtime route/match-expression.ts.
+    // Remove when the LLM knows the connected modules.
+    delete (command as Partial<WebSocketEvents['spark:command']>).destinations
 
     modsServerChannelStore.send({
       type: 'spark:command',

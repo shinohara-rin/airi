@@ -11,6 +11,7 @@ const { t } = useI18n()
 
 const {
   serviceConnected,
+  serviceName,
   latestRuntimeContextText,
   lastRuntimeContextAt,
   runtimeContextAgeMs,
@@ -23,6 +24,14 @@ const statusLabel = computed(() => {
   return serviceConnected.value
     ? t('settings.pages.modules.gaming-minecraft.status.service-online')
     : t('settings.pages.modules.gaming-minecraft.status.service-offline')
+})
+
+const runtimeLabel = computed(() => {
+  if (serviceName.value === 'airicraft')
+    return t('settings.pages.modules.gaming-minecraft.status.runtime-airicraft')
+  if (serviceName.value === 'minecraft-bot')
+    return t('settings.pages.modules.gaming-minecraft.status.runtime-minecraft-bot')
+  return ''
 })
 
 const lastRuntimeUpdate = computed(() => {
@@ -63,6 +72,9 @@ onMounted(() => {
   >
     <Callout :theme="statusTheme" :label="statusLabel">
       <div :class="['flex flex-col gap-2 text-sm']">
+        <div v-if="runtimeLabel">
+          {{ runtimeLabel }}
+        </div>
         <div>
           {{ lastRuntimeUpdate }}
         </div>
