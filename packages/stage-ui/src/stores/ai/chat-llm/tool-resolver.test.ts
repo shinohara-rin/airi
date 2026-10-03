@@ -7,9 +7,10 @@ import { resolveLlmTools, toolNameFrom } from './tool-resolver'
 // The default (non-injected) web-search branch reads the module store and the
 // tools barrel; mock both so the configured-gate + key-trim logic can be
 // exercised without real Pinia state or a live Tavily factory.
-const { createWebSearchToolsMock, useWebSearchStoreMock } = vi.hoisted(() => ({
+const { createWebSearchToolsMock, useWebSearchStoreMock, sendToChannelMock } = vi.hoisted(() => ({
   createWebSearchToolsMock: vi.fn(),
   useWebSearchStoreMock: vi.fn(),
+  sendToChannelMock: vi.fn(),
 }))
 
 vi.mock('../../../tools', async (importOriginal) => {
@@ -19,6 +20,11 @@ vi.mock('../../../tools', async (importOriginal) => {
 
 vi.mock('../../modules/web-search', () => ({
   useWebSearchStore: useWebSearchStoreMock,
+}))
+
+// The default spark command branch sends through the mods server channel store.
+vi.mock('../../mods/api/channel-server', () => ({
+  useModsServerChannelStore: () => ({ send: sendToChannelMock }),
 }))
 
 function createTool(name: string, description = `${name} description`): Tool {
@@ -158,5 +164,45 @@ describe('resolveLlmTools', () => {
       expect(createWebSearchToolsMock).toHaveBeenCalledWith({ apiKey: 'tvly-key' })
       expect(tools).toEqual([builtInTool, webSearchTool])
     })
+  })
+})
+
+describe('default spark command tool', () => {
+  beforeEach(() => {
+    sendToChannelMock.mockReset()
+  })
+
+  // ROOT CAUSE:
+  //
+  // The sender set `destinations` to an empty array to avoid invented targets.
+  // The channel server matches an empty list against no peer, so no module got the command.
+  //
+  // We fixed this by removing `destinations`, so the server broadcasts to every authenticated peer.
+  it('broadcasts the command instead of sending it to an empty destination list', async () => {
+    const tools = await resolveLlmTools({
+      builtInTools: [],
+      debugTools: [],
+      webSearchTools: [],
+      customTools: [],
+      activeTools: [],
+    })
+    const sparkCommandTool = tools.find(tool => toolNameFrom(tool) === 'builtIn_emitSparkCommand')
+
+    const result = await sparkCommandTool!.execute({
+      destinations: ['airicraft'],
+      interrupt: false,
+      priority: 'normal',
+      intent: 'action',
+      ack: null,
+      parentEventId: null,
+      guidance: null,
+      contexts: null,
+    }, { messages: [], toolCallId: 'call-1' })
+
+    expect(sendToChannelMock).toHaveBeenCalledOnce()
+    const sent = sendToChannelMock.mock.calls[0][0]
+    expect(sent.type).toBe('spark:command')
+    expect(sent.data).not.toHaveProperty('destinations')
+    expect(result).toContain('broadcast')
   })
 })
