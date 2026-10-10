@@ -4035,6 +4035,46 @@ importers:
         specifier: 'catalog:'
         version: 1.6.0
 
+  integrations/youtube-live-chat:
+    dependencies:
+      '@grpc/grpc-js':
+        specifier: ^1.14.5
+        version: 1.14.5
+      '@grpc/proto-loader':
+        specifier: ^0.8.1
+        version: 0.8.1
+      '@moeru/std':
+        specifier: 'catalog:'
+        version: 0.1.0-beta.17
+      '@proj-airi/server-sdk':
+        specifier: workspace:^
+        version: link:../../packages/server-sdk
+      injeca:
+        specifier: 'catalog:'
+        version: 0.2.0(@guiiai/logg@1.2.11)(error-stack-parser@2.1.4)(nanoid@6.0.1)
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.12
+      valibot:
+        specifier: 'catalog:'
+        version: 1.4.2(typescript@6.0.3)
+    devDependencies:
+      '@proj-airi/server-runtime':
+        specifier: workspace:^
+        version: link:../../packages/server-runtime
+      '@proj-airi/server-shared':
+        specifier: workspace:^
+        version: link:../../packages/server-shared
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: catalog:vitest
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(jsdom@30.0.1(@noble/hashes@2.3.0)(canvas@3.2.3))(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.0(supports-color@10.2.2))(terser@5.50.0)(tsx@4.23.12)(yaml@2.9.0))
+
   packages/audio:
     dependencies:
       '@alexanderolsen/libsamplerate-js':
@@ -8594,6 +8634,10 @@ packages:
 
   '@grpc/grpc-js@1.14.4':
     resolution: {integrity: sha512-k9Dj3DV/itK9D06Y8f190Qgop7/Ui+D0njFV3LHMPwPT75DpXLQohE9Wmz0QElrJnzsjB7KPWiKJbOl7IPDArQ==}
+    engines: {node: '>=12.10.0'}
+
+  '@grpc/grpc-js@1.14.5':
+    resolution: {integrity: sha512-7VZM+SVdEcUUqSQeNI3zM8Qs/BhQKZndPo2h5VkYkAM8Iz0wJIa8mKV5ekQGqG8UUsnkQ0NMxIxwkIHYvj0qOw==}
     engines: {node: '>=12.10.0'}
 
   '@grpc/proto-loader@0.8.1':
@@ -23415,6 +23459,11 @@ snapshots:
   '@grammyjs/types@4.0.0': {}
 
   '@grpc/grpc-js@1.14.4':
+    dependencies:
+      '@grpc/proto-loader': 0.8.1
+      '@js-sdsl/ordered-map': 4.4.2
+
+  '@grpc/grpc-js@1.14.5':
     dependencies:
       '@grpc/proto-loader': 0.8.1
       '@js-sdsl/ordered-map': 4.4.2

@@ -21,6 +21,7 @@ export default defineConfig({
     '**/assets/live2d/models/**',
     'apps/stage-tamagotchi/out/**',
     'apps/stage-tamagotchi/src/bindings/**',
+    'integrations/youtube-live-chat/src/generated/**',
     'apps/stage-tamagotchi-electron/out/**',
     'apps/stage-tamagotchi-electron/src/renderer/bindings/**',
     '**/flatpak/**',
