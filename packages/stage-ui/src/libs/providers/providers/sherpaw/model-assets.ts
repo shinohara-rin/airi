@@ -1,7 +1,9 @@
 import type { ModelAsset, ModelAssetStatus } from '@proj-airi/stage-shared/model-assets'
+import type { InferOutput } from 'valibot'
 
 import { ModelAssetRepository } from '@proj-airi/stage-shared/model-assets'
 import { assets } from '@proj-airi/vite-plugin-sherpaw/assets'
+import { array, number, object, parse, string } from 'valibot'
 
 import { updateModelAssetStatus } from '../../../../composables/use-model-asset-status'
 import { OpfsModelAssetStorage } from '../../../inference/model-assets-opfs'
@@ -112,4 +114,43 @@ export async function fetchSherpawModel(input: RequestInfo | URL, init?: Request
   if (host)
     return host.fetch(model, file.name, signal)
   return sherpawModelAssets.open(model.id, file.name, signal)
+}
+
+const packMetadataSchema = object({
+  files: array(object({ filename: string(), start: number(), end: number() })),
+  remote_package_size: number(),
+})
+
+/** A preload pack read into memory, ready to transfer to a Worker that loads it with `@sherpaw/preloader`. */
+export interface SherpawModelPack {
+  data: ArrayBuffer
+  metadata: InferOutput<typeof packMetadataSchema>
+}
+
+/**
+ * Reads the preload pack of one model through {@link fetchSherpawModel}.
+ * Remote packs install through the host model asset repository, which reports progress and supports cancel and delete.
+ *
+ * `name` describes the model in error messages.
+ * The promise rejects when the host has no such pack, a download fails, or the data is shorter than its metadata says.
+ */
+export async function fetchSherpawModelPack(id: string, name: string): Promise<SherpawModelPack> {
+  const files = assets[id]
+  if (!files)
+    throw new Error(`This application does not include the ${name}`)
+
+  const [dataResponse, metadataResponse] = await Promise.all([
+    fetchSherpawModel(new URL(files.data, document.baseURI)),
+    fetchSherpawModel(new URL(files.metadata, document.baseURI)),
+  ])
+  if (!dataResponse.ok || !metadataResponse.ok)
+    throw new Error(`Could not download the ${name} (${dataResponse.status}, ${metadataResponse.status})`)
+
+  const [data, metadataValue] = await Promise.all([dataResponse.arrayBuffer(), metadataResponse.json()])
+  const metadata = parse(packMetadataSchema, metadataValue)
+  // A partial download must not reach a recognizer Worker.
+  if (metadata.remote_package_size !== data.byteLength)
+    throw new Error(`The ${name} download is incomplete`)
+
+  return { data, metadata }
 }
