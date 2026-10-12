@@ -397,6 +397,7 @@ catalog:
   pg: ^8.23.0
   pinia: ^4.0.3
   pinia-plugin-synced: ^0.1.5
+  pinyin-pro: ^3.29.4
   pixi-filters: ^4.2.0
   pixi-live2d-display: ^0.4.0
   playwright: ^1.62.1
