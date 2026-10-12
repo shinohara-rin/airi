@@ -14,7 +14,9 @@ import { traceSpeechOutput } from '../composables/speech-output-trace'
 import { useVoiceDrafts } from '../composables/voice-drafts'
 import { useVoiceEndJudge } from '../composables/voice-end-judge'
 import { useVoiceRephrase } from '../composables/voice-rephrase'
+import { extractMessageText } from '../libs/chat-sync'
 import { observeInputLevel } from '../libs/voice/input-level'
+import { collectConversationHotwords, TranscriptionBiasList } from '../libs/voice/transcription-bias'
 import { createVoiceActivityPlugin } from '../libs/voice/voice-activity-plugin'
 import { createVoiceEndJudgePlugin } from '../libs/voice/voice-end-judge-plugin'
 import { createVoiceRephrasePlugin } from '../libs/voice/voice-rephrase-plugin'
@@ -69,8 +71,35 @@ export const useVoiceStore = defineStore('voice', () => {
   const composerInputs = new Map<string, string | undefined>()
   let presentedInput: { requestId: string, attempt: SpeechInputAttempt } | undefined
 
+  /**
+   * Conversation terms that bias the next recognition request of each session.
+   * The list is rebuilt after each assistant turn and when a session's messages become available.
+   * Speech start only reads the prepared list.
+   */
+  const transcriptionBias = new TranscriptionBiasList([{
+    name: 'conversation',
+    collect: async (sessionId) => {
+      const messages = sessions.getSessionMessagesIfLoaded(sessionId)
+      if (!messages)
+        return []
+      return collectConversationHotwords(messages.map(message => ({ role: message.role, text: extractMessageText(message) })))
+    },
+  }], { onError: (source, cause) => console.warn(`[voice] Hotword source ${source} failed`, cause) })
+  const stopBiasRebuild = chat.onChatTurnComplete(async (_chat, context) => {
+    void transcriptionBias.rebuild(context.sessionId)
+  })
+  watch(
+    () => [sessions.activeSessionId, sessions.getSessionMessagesIfLoaded(sessions.activeSessionId) !== undefined] as const,
+    ([sessionId, loaded]) => {
+      if (sessionId && loaded)
+        void transcriptionBias.rebuild(sessionId)
+    },
+    { immediate: true },
+  )
+
   const { controller, state, snapshot: transcript, error } = useVoiceController({
     transcriber: () => hearing.createTranscriber(),
+    transcriptionBias: sessionId => transcriptionBias.read(sessionId),
     speech: (turn) => {
       if (!output)
         throw new Error('Voice output host is not connected')
@@ -481,6 +510,8 @@ export const useVoiceStore = defineStore('voice', () => {
   }
 
   onScopeDispose(() => {
+    stopBiasRebuild()
+    transcriptionBias.dispose()
     void stopListening()
   })
 
