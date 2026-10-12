@@ -10,20 +10,20 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const hearingStore = useHearingStore()
-const { configured, autoSendEnabled, autoSendDelay, endJudgeEnabled, rephraseEnabled, rephraseProvider, rephraseModel } = storeToRefs(hearingStore)
+const { configured, autoSendEnabled, autoSendDelay, endJudgeEnabled, endJudgeProvider, endJudgeModel } = storeToRefs(hearingStore)
 const wakeWords = useWakeWordsStore()
 
 const providersStore = useProviderStore()
 const { configuredChatProvidersMetadata } = storeToRefs(providersStore)
-const rephraseProviderOptions = computed(() => [
-  { label: t('settings.pages.modules.hearing.sections.section.rephrase.same-as-chat'), value: '' },
+const endJudgeProviderOptions = computed(() => [
+  { label: t('settings.pages.modules.hearing.sections.section.end-judge.same-as-chat'), value: '' },
   ...configuredChatProvidersMetadata.value.map(provider => ({ label: provider.localizedName, value: provider.id })),
 ])
-const rephraseModelOptions = computed(() => providersStore.getModelsForProvider(rephraseProvider.value).map(model => ({ label: model.name, value: model.id })))
+const endJudgeModelOptions = computed(() => providersStore.getModelsForProvider(endJudgeProvider.value).map(model => ({ label: model.name, value: model.id })))
 
-watch(rephraseProvider, (providerId, previous) => {
+watch(endJudgeProvider, (providerId, previous) => {
   if (previous !== undefined && providerId !== previous)
-    rephraseModel.value = ''
+    endJudgeModel.value = ''
   if (providerId && providersStore.supportsModelListing(providerId))
     void providersStore.fetchModelsForProvider(providerId)
 }, { immediate: true })
@@ -116,44 +116,28 @@ const pages = computed(() => [
             :label="t('settings.pages.modules.hearing.sections.section.end-judge.enabled')"
             :description="t('settings.pages.modules.hearing.sections.section.end-judge.enabled-description')"
           />
-        </div>
-
-        <div :class="['border-t border-neutral-200 pt-4 dark:border-neutral-700', 'flex flex-col gap-4']">
-          <div>
-            <h3 :class="['text-base text-neutral-500 md:text-xl dark:text-neutral-500']">
-              {{ t('settings.pages.modules.hearing.sections.section.rephrase.title') }}
-            </h3>
-            <div :class="['text-neutral-400 dark:text-neutral-400']">
-              {{ t('settings.pages.modules.hearing.sections.section.rephrase.description') }}
-            </div>
-          </div>
-          <FieldCheckbox
-            v-model="rephraseEnabled"
-            :label="t('settings.pages.modules.hearing.sections.section.rephrase.enabled')"
-            :description="t('settings.pages.modules.hearing.sections.section.rephrase.enabled-description')"
-          />
-          <template v-if="rephraseEnabled">
+          <template v-if="endJudgeEnabled">
             <FieldCombobox
-              v-model="rephraseProvider"
-              :label="t('settings.pages.modules.hearing.sections.section.rephrase.provider')"
-              :description="t('settings.pages.modules.hearing.sections.section.rephrase.provider-description')"
-              :options="rephraseProviderOptions"
-              :placeholder="t('settings.pages.modules.hearing.sections.section.rephrase.same-as-chat')"
+              v-model="endJudgeProvider"
+              :label="t('settings.pages.modules.hearing.sections.section.end-judge.provider')"
+              :description="t('settings.pages.modules.hearing.sections.section.end-judge.provider-description')"
+              :options="endJudgeProviderOptions"
+              :placeholder="t('settings.pages.modules.hearing.sections.section.end-judge.same-as-chat')"
               layout="vertical"
             />
             <FieldCombobox
-              v-if="rephraseProvider && rephraseModelOptions.length"
-              v-model="rephraseModel"
-              :label="t('settings.pages.modules.hearing.sections.section.rephrase.model')"
-              :options="rephraseModelOptions"
-              :placeholder="t('settings.pages.modules.hearing.sections.section.rephrase.model-placeholder')"
+              v-if="endJudgeProvider && endJudgeModelOptions.length"
+              v-model="endJudgeModel"
+              :label="t('settings.pages.modules.hearing.sections.section.end-judge.model')"
+              :options="endJudgeModelOptions"
+              :placeholder="t('settings.pages.modules.hearing.sections.section.end-judge.model-placeholder')"
               layout="vertical"
             />
             <FieldInput
-              v-else-if="rephraseProvider"
-              v-model="rephraseModel"
-              :label="t('settings.pages.modules.hearing.sections.section.rephrase.model')"
-              :placeholder="t('settings.pages.modules.hearing.sections.section.rephrase.model-placeholder')"
+              v-else-if="endJudgeProvider"
+              v-model="endJudgeModel"
+              :label="t('settings.pages.modules.hearing.sections.section.end-judge.model')"
+              :placeholder="t('settings.pages.modules.hearing.sections.section.end-judge.model-placeholder')"
             />
           </template>
         </div>

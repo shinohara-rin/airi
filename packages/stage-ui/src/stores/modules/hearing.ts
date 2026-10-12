@@ -333,13 +333,11 @@ export const useHearingStore = defineStore('hearing-store', () => {
   const autoSendEnabled = useLocalStorageManualReset<boolean>('settings/hearing/auto-send-enabled', false, persistenceOptions)
   const autoSendDelay = useLocalStorageManualReset<number>('settings/hearing/auto-send-delay', 2000, persistenceOptions) // Default 2 seconds
   const confidenceThreshold = useLocalStorageManualReset<number>('settings/hearing/confidence-threshold', CONFIDENCE_THRESHOLD_DISABLED, persistenceOptions)
-  // Rephrasing sends transcripts to a chat model. Voice input already sends them to that model, so it is on by default.
-  const rephraseEnabled = useLocalStorageManualReset<boolean>('settings/hearing/rephrase-enabled', true, persistenceOptions)
   // A chat model reads paused transcripts and ends finished messages before the silence limit.
   const endJudgeEnabled = useLocalStorageManualReset<boolean>('settings/hearing/end-judge-enabled', true, persistenceOptions)
   // An empty provider uses the chat model of the consciousness module.
-  const rephraseProvider = useLocalStorageManualReset('settings/hearing/rephrase-provider', '', persistenceOptions)
-  const rephraseModel = useLocalStorageManualReset('settings/hearing/rephrase-model', '', persistenceOptions)
+  const endJudgeProvider = useLocalStorageManualReset('settings/hearing/end-judge-provider', '', persistenceOptions)
+  const endJudgeModel = useLocalStorageManualReset('settings/hearing/end-judge-model', '', persistenceOptions)
   const verboseJsonNotSupported = ref(false)
 
   watch(activeTranscriptionProvider, () => {
@@ -412,10 +410,9 @@ export const useHearingStore = defineStore('hearing-store', () => {
     autoSendEnabled.reset()
     autoSendDelay.reset()
     confidenceThreshold.reset()
-    rephraseEnabled.reset()
     endJudgeEnabled.reset()
-    rephraseProvider.reset()
-    rephraseModel.reset()
+    endJudgeProvider.reset()
+    endJudgeModel.reset()
   }
 
   async function transcription(
@@ -633,10 +630,9 @@ export const useHearingStore = defineStore('hearing-store', () => {
     autoSendEnabled,
     autoSendDelay,
     confidenceThreshold,
-    rephraseEnabled,
     endJudgeEnabled,
-    rephraseProvider,
-    rephraseModel,
+    endJudgeProvider,
+    endJudgeModel,
     verboseJsonNotSupported,
 
     supportsModelListing,

@@ -53,8 +53,7 @@ Consumers subscribe to the microphone input with their own abort signal. The las
 - `useVoiceMessagesStore` owns voice message recordings and their attachment submission.
 - Hearing selects providers and converts captured PCM to each provider's upload format. It does not open the microphone.
 - Speech preserves existing chunked synthesis and bidirectional provider output.
-- `createVoiceRephrasePlugin` rewrites final transcripts with a chat model through a checked transcript patch. The raw text stays in the transcript history. Each segment gets its own rewrite, so segment boundaries stay for later speaker labels. A reply with another segment count leaves the text unchanged.
-- `createVoiceEndJudgePlugin` ends a paused input early when a chat model reads its transcript as a finished message. The model is the rephrase model, or the chat model when no rephrase provider is set.
+- `createVoiceEndJudgePlugin` ends a paused input early when a chat model reads its transcript as a finished message. The model is the end judge model, or the chat model when no end judge provider is set.
 
 A pause of 1.2 seconds can end an input. With the end judge on, which is the default, the voice activity silence limit grows by 3 seconds.
 The judge then ends a finished message at the pause, and an unfinished one waits for the speaker to continue.

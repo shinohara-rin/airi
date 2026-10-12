@@ -13,11 +13,9 @@ import { useVoiceController } from '../composables/audio/voice-controller'
 import { traceSpeechOutput } from '../composables/speech-output-trace'
 import { useVoiceDrafts } from '../composables/voice-drafts'
 import { useVoiceEndJudge } from '../composables/voice-end-judge'
-import { useVoiceRephrase } from '../composables/voice-rephrase'
 import { observeInputLevel } from '../libs/voice/input-level'
 import { createVoiceActivityPlugin } from '../libs/voice/voice-activity-plugin'
 import { createVoiceEndJudgePlugin } from '../libs/voice/voice-end-judge-plugin'
-import { createVoiceRephrasePlugin } from '../libs/voice/voice-rephrase-plugin'
 import { getSpeechBusContext, voiceGenerationEnded, voiceGetTurns, voiceInputCommand, voiceInputLevel, voiceInterrupt, voiceLevelMonitor, voiceRequestSnapshot, voiceRequestTurns, voiceSnapshotChanged, voiceSpeechCommand, voiceTurnsChanged } from '../services/speech/bus'
 import { SileroVad } from '../workers/vad/silero-vad'
 import { useLlmStreamingControlStore } from './ai/chat-llm/streaming-control'
@@ -28,9 +26,6 @@ import { startsInputOnSpeech, useHearingStore } from './modules/hearing'
 import { useSettingsAudioDevice } from './settings/audio-device'
 import { useVoiceMessagesStore } from './voice-messages'
 import { useWakeWordDetectionStore } from './wake-word-detection'
-
-/** The longest time a chat model rewrite can delay a voice submission. */
-const VOICE_REPHRASE_TIMEOUT_MS = 10_000
 
 /**
  * Silence that ends a speech input.
@@ -94,11 +89,6 @@ export const useVoiceStore = defineStore('voice', () => {
     },
     onError: event => report(event.error),
   })
-  const { rephrase } = useVoiceRephrase()
-  controller.use(
-    createVoiceRephrasePlugin({ enabled: () => hearing.rephraseEnabled, rephrase, timeoutMs: VOICE_REPHRASE_TIMEOUT_MS }),
-    { grants: ['transcript-patch'], onError: event => report(event.error) },
-  )
   const { judge } = useVoiceEndJudge()
   controller.use(
     createVoiceEndJudgePlugin({ enabled: () => hearing.endJudgeEnabled, judge, pauseMs: VOICE_END_SILENCE.pauseMs }),

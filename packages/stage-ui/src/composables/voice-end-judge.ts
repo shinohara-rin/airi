@@ -35,8 +35,8 @@ function parseEndJudgement(reply: string): EndJudgement {
 /**
  * Judges with a chat model whether a paused voice input is a finished message.
  *
- * It uses the same model as voice rephrasing: the hearing rephrase provider when one is set, and otherwise the chat
- * model of the consciousness module. Both are text cleanup tasks of voice input, so one setting selects a fast model.
+ * It uses the hearing end judge provider when one is set, and otherwise the chat model of the consciousness module.
+ * The judge runs at each pause, so a fast model keeps the reply delay short.
  *
  * Returns:
  * - `judge`, which rejects when no model is configured, the request fails, or the reply is not the judgement JSON.
@@ -49,8 +49,8 @@ export function useVoiceEndJudge() {
   const hearing = useHearingStore()
 
   async function judge(transcript: string, context: TurnEvidence['context'], signal: AbortSignal): Promise<EndJudgement> {
-    const providerId = hearing.rephraseProvider || consciousness.activeProvider
-    const model = hearing.rephraseProvider ? hearing.rephraseModel : consciousness.activeModel
+    const providerId = hearing.endJudgeProvider || consciousness.activeProvider
+    const model = hearing.endJudgeProvider ? hearing.endJudgeModel : consciousness.activeModel
     if (!providerId || !model)
       throw new Error('No chat model is configured for voice end judgement')
 
