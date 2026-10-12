@@ -3,7 +3,8 @@ import type { PhoneticVocabularyEntry } from './phonetic-vocabulary'
 import { describe, expect, it } from 'vitest'
 
 import { kwsVocabulary } from './kws-model'
-import { createPhoneticMatcher, pronounceChinese } from './phonetic-match'
+import { mandarin, pronounceChinese } from './phonetic-mandarin'
+import { createPhoneticMatcher } from './phonetic-match'
 import { importVocabularyPack } from './phonetic-vocabulary'
 
 const sulfurCube: PhoneticVocabularyEntry = {
@@ -24,7 +25,7 @@ const creeper: PhoneticVocabularyEntry = {
 
 describe('createPhoneticMatcher', () => {
   it('suggests 硫方怪 for the plausible mishearing 流氓怪', () => {
-    const match = createPhoneticMatcher([sulfurCube, creeper])
+    const match = createPhoneticMatcher([sulfurCube, creeper], [mandarin])
 
     const [suggestion, ...rest] = match('我刚才在温泉边遇到了一只流氓怪')
 
@@ -37,25 +38,31 @@ describe('createPhoneticMatcher', () => {
   })
 
   it('does not suggest a term that the transcript already spells correctly', () => {
-    const match = createPhoneticMatcher([sulfurCube])
+    const match = createPhoneticMatcher([sulfurCube], [mandarin])
 
     expect(match('我遇到了一只硫方怪')).toEqual([])
   })
 
   it('ignores text that sounds different', () => {
-    const match = createPhoneticMatcher([sulfurCube, creeper])
+    const match = createPhoneticMatcher([sulfurCube, creeper], [mandarin])
 
     expect(match('今天天气很好，我们去公园散步吧')).toEqual([])
   })
 
   it('treats a tone change as almost the same sound', () => {
-    const match = createPhoneticMatcher([creeper])
+    const match = createPhoneticMatcher([creeper], [mandarin])
 
     expect(match('有个酷力爬在后面')[0]?.candidate).toBe('苦力怕')
   })
 
+  it('skips a pronunciation in the tokens of another language', () => {
+    const match = createPhoneticMatcher([{ ...creeper, pronunciations: [['K', 'R', 'IY1', 'P', 'ER0']] }], [mandarin])
+
+    expect(match('有个酷力爬在后面')).toEqual([])
+  })
+
   it('returns the best non-overlapping suggestions up to the limit', () => {
-    const match = createPhoneticMatcher([sulfurCube, creeper], { limit: 1 })
+    const match = createPhoneticMatcher([sulfurCube, creeper], [mandarin], { limit: 1 })
 
     const suggestions = match('流氓怪和酷力爬')
 

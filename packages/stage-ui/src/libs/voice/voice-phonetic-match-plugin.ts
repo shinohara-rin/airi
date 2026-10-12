@@ -1,6 +1,6 @@
 import type { VoicePlugin } from '@proj-airi/core-agent'
 
-import type { PhoneticSuggestion } from './phonetic-match'
+import type { PhoneticLanguage, PhoneticSuggestion } from './phonetic-match'
 import type { PhoneticVocabularyEntry } from './phonetic-vocabulary'
 
 /** Context key of the published suggestions. The chat prompt reads it through the submission context. */
@@ -16,6 +16,12 @@ export interface PhoneticSuggestions {
 }
 
 const NOTE = 'Speech recognition can mishear these spans. Each candidate sounds similar. The transcript is unchanged. Use a candidate only when the conversation supports it.'
+
+/** Loads the shared matcher with each language adapter. Each adapter brings its own dictionary, so they load lazily. */
+async function loadMatcher(entries: readonly PhoneticVocabularyEntry[]) {
+  const [{ createPhoneticMatcher }, { mandarin }] = await Promise.all([import('./phonetic-match'), import('./phonetic-mandarin')])
+  return createPhoneticMatcher(entries, [mandarin])
+}
 
 export interface VoicePhoneticMatchOptions {
   /**
@@ -38,6 +44,7 @@ export interface VoicePhoneticMatchOptions {
  * Interim text is not matched, because the provider can still revise it.
  *
  * The matcher and its pinyin dictionary load on the first input with a vocabulary, so hosts without one do not load it.
+ * v1 matches Mandarin only. Another language joins as a {@link PhoneticLanguage} adapter in {@link loadMatcher}.
  *
  * Use when:
  * - Install it on a controller. It needs no grant.
@@ -52,7 +59,7 @@ export function createVoicePhoneticMatchPlugin(options: VoicePhoneticMatchOption
 
   function matcherFor(entries: readonly PhoneticVocabularyEntry[]) {
     if (cached?.entries !== entries)
-      cached = { entries, match: import('./phonetic-match').then(module => module.createPhoneticMatcher(entries)) }
+      cached = { entries, match: loadMatcher(entries) }
     return cached.match
   }
 

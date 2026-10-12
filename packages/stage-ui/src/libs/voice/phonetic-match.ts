@@ -1,7 +1,6 @@
 import type { PhoneticVocabularyEntry } from './phonetic-vocabulary'
 
 import { merge } from '@moeru/std'
-import { pinyin } from 'pinyin-pro'
 
 /** One possible mishearing that the conversation model can accept or ignore. The transcript itself never changes. */
 export interface PhoneticSuggestion {
@@ -16,10 +15,33 @@ export interface PhoneticSuggestion {
   readonly description: string
 }
 
+/** One sound unit of the transcript, for example a Mandarin syllable or a Japanese mora. */
+export interface PhoneticUnit {
+  readonly tokens: readonly string[]
+  /** UTF-16 offsets of the unit's characters in the transcript. */
+  readonly start: number
+  readonly end: number
+}
+
+/**
+ * Converts one language between text and tokens, and prices token substitutions for that language.
+ *
+ * The matcher is shared. Each language owns only its tokenizer and its cost table, so a Korean jamo or a Japanese
+ * kana adapter plugs in without a change to the matcher.
+ */
+export interface PhoneticLanguage {
+  /** Splits transcript text into runs of units. A match window never crosses two runs. */
+  units: (text: string) => PhoneticUnit[][]
+  /** Counts the units of a vocabulary pronunciation. Returns 0 when the pronunciation uses tokens of another language. */
+  countUnits: (tokens: readonly string[]) => number
+  /** The cost from 0 to 1 of hearing token `a` for token `b`. Insertions and deletions cost 1. */
+  substitutionCost: (a: string, b: string) => number
+}
+
 export interface PhoneticMatchOptions {
   /**
    * The lowest similarity that becomes a suggestion.
-   * With six tokens, one unrelated initial and one tone change score 0.82, so `流氓怪` still reaches `硫方怪`.
+   * With six Mandarin tokens, one unrelated initial and one tone change score 0.82, so `流氓怪` still reaches `硫方怪`.
    * @default 0.78
    */
   threshold: number
@@ -32,55 +54,8 @@ export interface PhoneticMatchOptions {
 
 const defaultOptions: PhoneticMatchOptions = { threshold: 0.78, limit: 3 }
 
-/**
- * Substitution costs between tokens.
- *
- * ASR keeps the vowel shape of a syllable more often than its tone, so a tone change costs little.
- * The groups list pairs that Mandarin speakers and ASR models often merge, for example `l` and `n`, or `an` and `ang`.
- * Any other substitution, insertion, or deletion costs 1.
- */
-const TONE_COST = 0.1
-const CONFUSABLE_COST = 0.5
-const confusableGroups = [['l', 'n', 'r'], ['f', 'h'], ['z', 'zh'], ['c', 'ch'], ['s', 'sh'], ['an', 'ang'], ['en', 'eng'], ['in', 'ing'], ['ian', 'iang'], ['uan', 'uang']]
-const confusableGroup = new Map(confusableGroups.flatMap((group, index) => group.map(token => [token, index] as const)))
-
-interface Syllable {
-  readonly tokens: readonly string[]
-  /** UTF-16 offsets of the syllable's characters in the transcript. */
-  readonly start: number
-  readonly end: number
-}
-
-/**
- * Removes tone marks, the `ü` diaeresis, and ARPAbet stress digits.
- * Pinyin libraries and the model vocabulary disagree on `ü` after `j`, `q`, `x`, and `y`, so the diaeresis is not a distinction here.
- *
- * @example
- * toneless('ǘ') // => 'u'
- * toneless('AY1') // => 'AY'
- */
-function toneless(token: string) {
-  return token.normalize('NFD').replace(/\p{M}/gu, '').replace(/\d$/, '')
-}
-
-/** A syllable has one vowel-bearing token: a pinyin final or an ARPAbet vowel with a stress digit. */
-function countSyllables(tokens: readonly string[]) {
-  return tokens.filter(token => /[aeiou]/i.test(toneless(token))).length
-}
-
-function substitutionCost(a: string, b: string) {
-  if (a === b)
-    return 0
-  const baseA = toneless(a)
-  const baseB = toneless(b)
-  if (baseA === baseB)
-    return TONE_COST
-  const group = confusableGroup.get(baseA)
-  return group !== undefined && group === confusableGroup.get(baseB) ? CONFUSABLE_COST : 1
-}
-
 /** Weighted edit distance, normalized to a similarity from 0 to 1. */
-function similarity(heard: readonly string[], expected: readonly string[]) {
+function similarity(heard: readonly string[], expected: readonly string[], substitutionCost: PhoneticLanguage['substitutionCost']) {
   let previous = Array.from({ length: expected.length + 1 }, (_, index) => index)
   for (let i = 1; i <= heard.length; i++) {
     const current = [i]
@@ -92,80 +67,45 @@ function similarity(heard: readonly string[], expected: readonly string[]) {
 }
 
 /**
- * Splits text into runs of Chinese syllables, each as a pinyin initial and a toned final.
- * Any other character ends a run, so a match never crosses punctuation or another script.
- */
-function syllableRuns(text: string): Syllable[][] {
-  const runs: Syllable[][] = []
-  let run: Syllable[] = []
-  let offset = 0
-  for (const item of pinyin(text, { type: 'all', toneType: 'symbol' })) {
-    const start = offset
-    offset += item.origin.length
-    if (!item.isZh || !item.final) {
-      if (run.length)
-        runs.push(run)
-      run = []
-      continue
-    }
-    run.push({ tokens: item.initial ? [item.initial, item.final] : [item.final], start, end: offset })
-  }
-  if (run.length)
-    runs.push(run)
-  return runs
-}
-
-/**
- * Converts Chinese text to model tokens. Vocabulary packs use it when an entry has only written forms.
- *
- * @example
- * pronounceChinese('硫方怪')
- * // => ['l', 'iú', 'f', 'āng', 'g', 'uài']
- * pronounceChinese('Sulfur Cube')
- * // => undefined
- */
-export function pronounceChinese(text: string): string[] | undefined {
-  const runs = syllableRuns(text)
-  if (runs.length !== 1 || runs[0].length !== [...text].length)
-    return undefined
-  return runs[0].flatMap(syllable => syllable.tokens)
-}
-
-/**
- * Creates a matcher that compares every syllable n-gram of a transcript with every vocabulary pronunciation.
+ * Creates a matcher that compares every unit n-gram of a transcript with every vocabulary pronunciation.
  *
  * The matcher checks each phrase, not only text that looks wrong, because a mishearing is often a plausible word,
- * for example `流氓怪` for `硫方怪`. A window covers one syllable less to one syllable more than the pronunciation,
- * so a dropped or an extra syllable still matches. Pronunciations shorter than two syllables are skipped, because a
+ * for example `流氓怪` for `硫方怪`. A window covers one unit less to one unit more than the pronunciation,
+ * so a dropped or an extra unit still matches. Pronunciations shorter than two units are skipped, because a
  * single syllable sounds like too many words.
  *
- * v1 reads only Chinese transcript text. English words and mixed Chinese and English phrases do not match yet.
+ * Each language reads only the pronunciations in its own tokens. Mixed-language phrases do not match.
  *
- * Returns suggestions with the highest score first. Spans do not overlap, and a span that already contains a written form of
- * the term is not suggested.
+ * Returns suggestions with the highest score first. Spans do not overlap, and a span that already contains a written
+ * form of the term is not suggested.
  */
-export function createPhoneticMatcher(entries: readonly PhoneticVocabularyEntry[], options?: Partial<PhoneticMatchOptions>) {
+export function createPhoneticMatcher(entries: readonly PhoneticVocabularyEntry[], languages: readonly PhoneticLanguage[], options?: Partial<PhoneticMatchOptions>) {
   const { threshold, limit } = merge(defaultOptions, options)
-  const targets = entries.flatMap(entry => entry.pronunciations.map(tokens => ({ entry, tokens, syllables: countSyllables(tokens) })))
-    .filter(target => target.syllables >= 2)
+  const plans = languages.map(language => ({
+    language,
+    targets: entries.flatMap(entry => entry.pronunciations.map(tokens => ({ entry, tokens, units: language.countUnits(tokens) })))
+      .filter(target => target.units >= 2),
+  })).filter(plan => plan.targets.length)
 
   return (text: string): PhoneticSuggestion[] => {
     const found: (PhoneticSuggestion & { start: number, end: number })[] = []
-    for (const run of syllableRuns(text)) {
-      for (const target of targets) {
-        for (let size = target.syllables - 1; size <= target.syllables + 1; size++) {
-          for (let first = 0; first + size <= run.length; first++) {
-            const window = run.slice(first, first + size)
-            const start = window[0].start
-            const end = window.at(-1)!.end
-            const span = text.slice(start, end)
-            if (target.entry.writtenForms.some(form => span.includes(form)))
-              continue
-            const score = similarity(window.flatMap(syllable => syllable.tokens), target.tokens)
-            if (score < threshold)
-              continue
-            const { term, description, source, writtenForms } = target.entry
-            found.push({ span, candidate: writtenForms[0] ?? term, term, score: Math.round(score * 100) / 100, source, description, start, end })
+    for (const { language, targets } of plans) {
+      for (const run of language.units(text)) {
+        for (const target of targets) {
+          for (let size = target.units - 1; size <= target.units + 1; size++) {
+            for (let first = 0; first + size <= run.length; first++) {
+              const window = run.slice(first, first + size)
+              const start = window[0].start
+              const end = window.at(-1)!.end
+              const span = text.slice(start, end)
+              if (target.entry.writtenForms.some(form => span.includes(form)))
+                continue
+              const score = similarity(window.flatMap(unit => unit.tokens), target.tokens, language.substitutionCost)
+              if (score < threshold)
+                continue
+              const { term, description, source, writtenForms } = target.entry
+              found.push({ span, candidate: writtenForms[0] ?? term, term, score: Math.round(score * 100) / 100, source, description, start, end })
+            }
           }
         }
       }
