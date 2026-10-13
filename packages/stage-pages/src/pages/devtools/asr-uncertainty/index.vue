@@ -301,7 +301,7 @@ onBeforeUnmount(() => recording.value?.abort())
         <FieldRange
           v-model="run.firstCount"
           label="Early stop after"
-          description="These decodes run first. The others run only when the words of one of them differ from the reference. Token times do not count. 0 runs all of them. Clip only."
+          description="These decodes run first. The others run only when one of them hears other words than the reference, or a word at another time. 0 runs all of them. Clip only."
           :min="0" :max="8" :step="1"
         />
         <FieldRange v-model="run.snrMinDb" label="Lowest SNR" :min="0" :max="40" :step="1" :format-value="value => `${value} dB`" />

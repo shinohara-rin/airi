@@ -2,7 +2,7 @@ import type { Hypothesis } from './analysis'
 import type { DecoderPool } from './decoder-pool'
 import type { Perturbation, PerturbationRanges } from './perturbation'
 
-import { normalizeToken, toHypothesis } from './analysis'
+import { analyzeHypotheses, defaultAnalysisOptions, normalizeToken, toHypothesis } from './analysis'
 import { cleanPerturbation, perturbAudio, samplePerturbations } from './perturbation'
 
 /** Settings of one probe run on one clip. */
@@ -15,8 +15,8 @@ export interface ProbeSettings {
   /** Blank penalty of the extra decode that exposes deleted speech. `0` skips that decode. */
   readonly blankPenalty: number
   /**
-   * Perturbed decodes that run first. The others run only when the words of one of these differ from
-   * the reference. Token times do not count. A value of `count` or more, or `0`, turns the early stop off.
+   * Perturbed decodes that run first. The others run only when one of these hears other words than the
+   * reference, or a word at another time. A value of `count` or more, or `0`, turns the early stop off.
    */
   readonly firstCount: number
 }
@@ -52,6 +52,17 @@ function sameWords(reference: Hypothesis, hypothesis: Hypothesis) {
 }
 
 /**
+ * True when every sample has the reference's words in the same order, each near its reference time.
+ * The analysis decides "near" with its default thresholds, so a word that moves in time also counts as a change.
+ */
+function agreesWithReference(reference: Hypothesis, samples: readonly Hypothesis[], durationSeconds: number) {
+  if (!samples.every(sample => sameWords(reference, sample)))
+    return false
+  const { tokens } = analyzeHypotheses(reference, samples, durationSeconds, defaultAnalysisOptions)
+  return tokens.every(agreement => normalizeToken(agreement.token.text) === '' || (agreement.byTime ?? 1) === 1)
+}
+
+/**
  * Decodes one clip clean and with perturbations, and returns every hypothesis on the clip's clock.
  *
  * The reference is a decode of the same clip, not the live transcript. A live decoder carries context
@@ -84,7 +95,8 @@ export async function probeClip(pool: Pick<DecoderPool, 'decode'>, clip: Float32
     blankPenalty > 0 ? decode(cleanPerturbation, blankPenalty) : undefined,
   ])
 
-  const stoppedEarly = earlyStop && firstSamples.every(sample => sameWords(reference, sample.hypothesis))
+  const durationSeconds = clip.length / sampleRate
+  const stoppedEarly = earlyStop && agreesWithReference(reference, firstSamples.map(sample => sample.hypothesis), durationSeconds)
   let samples = firstSamples
   if (earlyStop && !stoppedEarly) {
     const rest = perturbations.slice(first.length)
@@ -92,5 +104,5 @@ export async function probeClip(pool: Pick<DecoderPool, 'decode'>, clip: Float32
     samples = [...firstSamples, ...await decodeSamples(rest)]
   }
 
-  return { clip, durationSeconds: clip.length / sampleRate, reference, samples, probe, stoppedEarly }
+  return { clip, durationSeconds, reference, samples, probe, stoppedEarly }
 }

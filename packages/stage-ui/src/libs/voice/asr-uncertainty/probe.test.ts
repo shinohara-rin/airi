@@ -14,8 +14,9 @@ const settings: ProbeSettings = {
   firstCount: 3,
 }
 
-function segment(text: string): RawSegment[] {
-  return [{ text, tokens: [...text], timestamps: [...text].map((_, index) => 0.2 * index), ysProbs: [], startTime: 0 }]
+/** One segment with a token every 0.2 s, from `startTime` seconds. */
+function segment(text: string, startTime = 0): RawSegment[] {
+  return [{ text, tokens: [...text], timestamps: [...text].map((_, index) => 0.2 * index), ysProbs: [], startTime }]
 }
 
 /** A pool that answers each decode from `heard` and counts the decodes. */
@@ -53,6 +54,17 @@ describe('probeClip', () => {
     expect(result.samples).toHaveLength(8)
     expect(pool.calls).toBe(10)
     expect(progress.at(-1)).toEqual([10, 10])
+  })
+
+  it('runs every decode when one of the first ones hears the same words at another time', async () => {
+    let calls = 0
+    // Call 1, the first perturbed decode, hears the words 1 s later than the reference.
+    const pool = { decode: async () => segment('我想要', calls++ === 1 ? 1 : 0) }
+
+    const result = await probeClip(pool, new Float32Array(3 * 16000), { ...settings, blankPenalty: 0 })
+
+    expect(result.stoppedEarly).toBe(false)
+    expect(result.samples).toHaveLength(8)
   })
 
   it('ignores punctuation when it compares the first decodes', async () => {
