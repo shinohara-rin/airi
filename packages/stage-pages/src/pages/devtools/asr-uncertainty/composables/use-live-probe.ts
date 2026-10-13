@@ -1,4 +1,4 @@
-import type { LiveEndpoint, LiveUpdate, ProbeResult, SpeechSelectionOptions } from '@proj-airi/stage-ui/libs/voice/asr-uncertainty'
+import type { LiveDecoder, LiveEndpoint, LiveUpdate, ProbeResult, SpeechSelectionOptions } from '@proj-airi/stage-ui/libs/voice/asr-uncertainty'
 
 import type { ProbeDecoders } from './use-probe-decoders'
 import type { ProbeRunSettings } from './use-uncertainty-probe'
@@ -6,8 +6,6 @@ import type { ProbeRunSettings } from './use-uncertainty-probe'
 import { errorMessageFrom } from '@moeru/std'
 import {
   AudioHistory,
-  fetchDecoderModel,
-  LiveDecoder,
   normalizeToken,
   planLiveStreams,
   samplePerturbations,
@@ -71,15 +69,16 @@ export function useLiveProbe(decoders: ProbeDecoders) {
     utterances.value = []
     lag.value = 0
 
-    // The clip pool holds its own copies of the model. Live mode does not use them.
-    decoders.release()
     const perturbations = samplePerturbations(settings.count, { snrDb: settings.ranges.snrDb, shiftMs: [0, 0], speed: [1, 1] }, settings.seed)
     const plan = planLiveStreams(perturbations, settings.blankPenalty, settings.workers)
     const created: LiveDecoder[] = []
     try {
-      const model = await fetchDecoderModel(settings.model)
-      // Every start must settle, so a failed start leaves no Worker running.
-      const starts = await Promise.allSettled(plan.workers.map((streams, index) => LiveDecoder.create(model, { sampleRate: settings.sampleRate, streams, leads: index === 0 })))
+      // The pool keeps its Workers and their model between runs, so only the first run loads the model.
+      const pool = await decoders.poolFor(settings.model, settings.workers)
+      if (session !== current)
+        return
+      // Every listen must settle, so a failed start leaves no session open.
+      const starts = await Promise.allSettled(plan.workers.map((streams, index) => pool.decoders[index].listen({ sampleRate: settings.sampleRate, streams, leads: index === 0 })))
       for (const started of starts) {
         if (started.status === 'fulfilled')
           created.push(started.value)
@@ -189,13 +188,12 @@ export function useLiveProbe(decoders: ProbeDecoders) {
         return
       error.value = errorMessageFrom(cause) ?? 'Live decoding failed.'
       status.value = 'error'
-      // The Workers stop below, so the segments that wait for rollouts never get them.
-      utterances.value = utterances.value.map(utterance => utterance.status === 'waiting' ? { ...utterance, status: 'error', error: 'Stopped before the rollouts' } : utterance)
     }
     finally {
-      // `finish` answers after every earlier cut, so no cut is still pending here unless the input failed.
+      // A Worker answers calls in order, so the cuts sent before `close` still answer.
+      // `close` does nothing after `finish`. The Workers keep the model for the next run.
       for (const decoder of created)
-        decoder.dispose()
+        void decoder.close().catch(() => {})
     }
   }
 

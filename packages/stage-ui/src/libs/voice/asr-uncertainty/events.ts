@@ -51,7 +51,15 @@ export interface LiveStreamSpec {
   readonly blankPenalty: number
 }
 
-export interface LiveListen {
+/**
+ * Names one live session of a Worker. A Worker keeps one session at a time. Calls for another session
+ * fail, so a session that the caller dropped cannot feed or close a newer one.
+ */
+export interface LiveSessionRef {
+  readonly session: number
+}
+
+export interface LiveListen extends LiveSessionRef {
   readonly sampleRate: number
   readonly streams: readonly LiveStreamSpec[]
   /**
@@ -78,17 +86,19 @@ export interface LiveUpdate {
   readonly endpoints: readonly LiveEndpoint[]
 }
 
-export interface LiveChunk {
+export interface LiveChunk extends LiveSessionRef {
   /** Mono PCM in [-1, 1] at the sample rate of `decoderListen`. The worker takes ownership. */
   readonly samples: Float32Array<ArrayBuffer>
 }
 
 export const decoderLoad = defineInvokeEventa<void, DecoderModel>('voice:asr-uncertainty:decoder:load')
 export const decoderDecode = defineInvokeEventa<RawSegment[], DecodeRequest>('voice:asr-uncertainty:decoder:decode')
-/** Opens the live streams. A second call drops the open streams and starts new ones. */
+/** Opens a live session. It replaces the open session, and drops that session's streams. */
 export const decoderListen = defineInvokeEventa<void, LiveListen>('voice:asr-uncertainty:decoder:listen')
 export const decoderAccept = defineInvokeEventa<LiveUpdate, LiveChunk>('voice:asr-uncertainty:decoder:accept')
 /** Closes the segment of every live stream at the input accepted so far, and starts the next ones. */
-export const decoderCut = defineInvokeEventa<LiveEndpoint, void>('voice:asr-uncertainty:decoder:cut')
+export const decoderCut = defineInvokeEventa<LiveEndpoint, LiveSessionRef>('voice:asr-uncertainty:decoder:cut')
 /** Flushes and closes the live streams. The result holds the last segment of each stream. */
-export const decoderFinish = defineInvokeEventa<LiveEndpoint, void>('voice:asr-uncertainty:decoder:finish')
+export const decoderFinish = defineInvokeEventa<LiveEndpoint, LiveSessionRef>('voice:asr-uncertainty:decoder:finish')
+/** Closes the live streams without a result. Does nothing when the session is already closed or replaced. */
+export const decoderClose = defineInvokeEventa<void, LiveSessionRef>('voice:asr-uncertainty:decoder:close')

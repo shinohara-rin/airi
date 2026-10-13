@@ -1,6 +1,6 @@
 export * from './analysis'
 export * from './articulation'
-export { ClipDecoder, fetchDecoderModel, LiveDecoder } from './decoder'
+export { DecoderWorker, fetchDecoderModel, LiveDecoder } from './decoder'
 export * from './decoder-pool'
 export type { DecoderModel, LiveEndpoint, LiveListen, LiveStreamSpec, LiveUpdate, RawSegment } from './events'
 export * from './live'

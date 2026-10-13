@@ -8,7 +8,7 @@ import { createOnlineRecognizer, initASRModule, OnlineRecognizerTypes } from '@s
 import { loadData } from '@sherpaw/preloader'
 import { array, number, object, optional, parse, string } from 'valibot'
 
-import { decoderAccept, decoderCut, decoderDecode, decoderFinish, decoderListen, decoderLoad } from './events'
+import { decoderAccept, decoderClose, decoderCut, decoderDecode, decoderFinish, decoderListen, decoderLoad } from './events'
 import { InputLevel, NoiseStream } from './live-noise'
 
 /**
@@ -41,6 +41,7 @@ interface LiveStream {
 }
 
 interface LiveState {
+  readonly session: number
   readonly streams: LiveStream[]
   readonly sampleRate: number
   /** Input samples accepted so far, without the tail padding. */
@@ -127,10 +128,10 @@ function closeLive() {
     state.live = undefined
 }
 
-function listening(): LiveState {
+function listening(session: number): LiveState {
   const live = state?.live
-  if (!live)
-    throw new Error('Start listening before sending audio.')
+  if (live?.session !== session)
+    throw new Error('This live session is closed.')
   return live
 }
 
@@ -189,10 +190,10 @@ defineInvokeHandler(context, decoderDecode, ({ samples, sampleRate, blankPenalty
   }
 })
 
-defineInvokeHandler(context, decoderListen, ({ sampleRate, streams, leads }) => {
+defineInvokeHandler(context, decoderListen, ({ session, sampleRate, streams, leads }) => {
   const current = loaded()
   closeLive()
-  const live: LiveState = { streams: [], sampleRate, received: 0, level: new InputLevel(sampleRate), leads }
+  const live: LiveState = { session, streams: [], sampleRate, received: 0, level: new InputLevel(sampleRate), leads }
   current.live = live
   for (const spec of streams) {
     const recognizer = recognizerFor(spec.blankPenalty)
@@ -200,8 +201,8 @@ defineInvokeHandler(context, decoderListen, ({ sampleRate, streams, leads }) => 
   }
 })
 
-defineInvokeHandler(context, decoderAccept, ({ samples }): LiveUpdate => {
-  const live = listening()
+defineInvokeHandler(context, decoderAccept, ({ session, samples }): LiveUpdate => {
+  const live = listening(session)
   feedLive(live, samples)
   live.received += samples.length
   const first = live.streams[0]
@@ -213,10 +214,10 @@ defineInvokeHandler(context, decoderAccept, ({ samples }): LiveUpdate => {
   return { partial: hasContent(partial) ? partial : undefined, endpoints: [] }
 })
 
-defineInvokeHandler(context, decoderCut, () => cutLive(listening()))
+defineInvokeHandler(context, decoderCut, ({ session }) => cutLive(listening(session)))
 
-defineInvokeHandler(context, decoderFinish, (): LiveEndpoint => {
-  const live = listening()
+defineInvokeHandler(context, decoderFinish, ({ session }): LiveEndpoint => {
+  const live = listening(session)
   try {
     // The padding is not input, so it does not count in `received`, and the segments end where the input ended.
     feedLive(live, new Float32Array(Math.round(live.sampleRate * tailPaddingSeconds)))
@@ -230,4 +231,9 @@ defineInvokeHandler(context, decoderFinish, (): LiveEndpoint => {
   finally {
     closeLive()
   }
+})
+
+defineInvokeHandler(context, decoderClose, ({ session }) => {
+  if (state?.live?.session === session)
+    closeLive()
 })

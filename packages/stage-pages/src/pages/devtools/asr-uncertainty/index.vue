@@ -292,7 +292,7 @@ onBeforeUnmount(() => recording.value?.abort())
         <FieldRange
           v-model="run.workers"
           label="Decoder Workers"
-          description="Decodes that run at the same time. Each Worker holds its own copy of the model, so each one adds about the model size in memory."
+          description="Decodes that run at the same time. Each Worker holds its own copy of the model, so each one adds about the model size in memory. The Workers keep the model loaded between runs."
           :min="1" :max="8" :step="1"
         />
       </fieldset>

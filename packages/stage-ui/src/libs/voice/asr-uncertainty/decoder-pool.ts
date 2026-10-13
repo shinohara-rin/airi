@@ -1,9 +1,9 @@
 import type { DecoderModel, RawSegment } from './events'
 
-import { ClipDecoder } from './decoder'
+import { DecoderWorker } from './decoder'
 
-/** The part of {@link ClipDecoder} that the pool uses. */
-export type PooledDecoder = Pick<ClipDecoder, 'decode' | 'dispose'>
+/** The part of {@link DecoderWorker} that the pool uses. */
+export type PooledDecoder = Pick<DecoderWorker, 'decode' | 'dispose'>
 
 /**
  * Runs clip decodes on several decoders at the same time.
@@ -11,18 +11,21 @@ export type PooledDecoder = Pick<ClipDecoder, 'decode' | 'dispose'>
  * Perturbed decodes do not depend on each other, so each decoder takes the next waiting decode when
  * it is free. Waiting decodes start in call order. Each decoder holds its own copy of the model, so
  * memory grows with the pool size.
+ *
+ * Live sessions run on `decoders` directly, outside the queue. Do not decode clips while a live
+ * session runs, or both share the same Workers.
  */
-export class DecoderPool {
-  private readonly idle: PooledDecoder[]
-  private readonly waiting: ((decoder: PooledDecoder) => void)[] = []
+export class DecoderPool<Decoder extends PooledDecoder = DecoderWorker> {
+  private readonly idle: Decoder[]
+  private readonly waiting: ((decoder: Decoder) => void)[] = []
 
-  constructor(private readonly decoders: readonly PooledDecoder[]) {
+  constructor(readonly decoders: readonly Decoder[]) {
     this.idle = [...decoders]
   }
 
   /** Starts `size` Worker decoders. When one fails to start, the others stop too. */
   static async create(model: DecoderModel, size: number): Promise<DecoderPool> {
-    const results = await Promise.allSettled(Array.from({ length: size }, () => ClipDecoder.create(model)))
+    const results = await Promise.allSettled(Array.from({ length: size }, () => DecoderWorker.create(model)))
     const decoders = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])
     const failure = results.find(result => result.status === 'rejected')
     if (failure) {
@@ -60,13 +63,13 @@ export class DecoderPool {
       decoder.dispose()
   }
 
-  private acquire(signal?: AbortSignal): Promise<PooledDecoder> {
+  private acquire(signal?: AbortSignal): Promise<Decoder> {
     const free = this.idle.pop()
     if (free)
       return Promise.resolve(free)
     return new Promise((resolve, reject) => {
       const waiter = {
-        take: (decoder: PooledDecoder) => {
+        take: (decoder: Decoder) => {
           signal?.removeEventListener('abort', waiter.abort)
           resolve(decoder)
         },
@@ -80,7 +83,7 @@ export class DecoderPool {
     })
   }
 
-  private release(decoder: PooledDecoder) {
+  private release(decoder: Decoder) {
     const next = this.waiting.shift()
     if (next)
       next(decoder)
