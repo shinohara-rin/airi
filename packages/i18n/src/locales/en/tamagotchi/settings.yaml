@@ -89,6 +89,9 @@ devtools:
       threshold:
         title: Threshold
         description: The lowest similarity that becomes a suggestion.
+      guessed-threshold:
+        title: Threshold for unknown words
+        description: The lowest similarity for a phrase with a word that is not in the dictionary. A recognizer writes such a word when it cannot place the sound.
       tokens:
         title: Transcript tokens
       suggestions:
@@ -97,7 +100,7 @@ devtools:
         empty: No suggestions
       nearest:
         title: Nearest candidates
-        description: The best match of each phrase at any score above zero. Use it to tune the threshold.
+        description: The ten closest candidates at any score above zero. Grey candidates are below the threshold.
     context-flow:
       title: Context Flow
     presence-bubble:

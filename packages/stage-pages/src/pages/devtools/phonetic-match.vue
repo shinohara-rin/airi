@@ -5,7 +5,7 @@ import { errorMessageFrom } from '@moeru/std'
 import { kwsVocabulary } from '@proj-airi/stage-ui/libs/voice/kws-model'
 import { english, pronounceEnglish } from '@proj-airi/stage-ui/libs/voice/phonetic-english'
 import { mandarin, pronounceChinese } from '@proj-airi/stage-ui/libs/voice/phonetic-mandarin'
-import { createPhoneticMatcher } from '@proj-airi/stage-ui/libs/voice/phonetic-match'
+import { createPhoneticMatcher, selectSuggestions } from '@proj-airi/stage-ui/libs/voice/phonetic-match'
 import { importVocabularyPack } from '@proj-airi/stage-ui/libs/voice/phonetic-vocabulary'
 import { FieldRange, FieldTextArea } from '@proj-airi/ui'
 import { computed, ref } from 'vue'
@@ -27,6 +27,7 @@ const samplePack = {
 const transcript = ref('我刚才在温泉边遇到了一只流氓怪，后面还有个酷力爬. Then an end her man took a block.')
 const packText = ref(JSON.stringify(samplePack, null, 2))
 const threshold = ref(0.78)
+const guessedThreshold = ref(0.7)
 
 const pack = computed((): { entries: PhoneticVocabularyEntry[] } | { error: string } => {
   try {
@@ -40,9 +41,11 @@ const pack = computed((): { entries: PhoneticVocabularyEntry[] } | { error: stri
 const entries = computed(() => 'entries' in pack.value ? pack.value.entries : [])
 const languages = [mandarin, english]
 const tokens = computed(() => languages.flatMap(language => language.units(transcript.value)).map(run => run.map(unit => unit.tokens.join(' ')).join(' · ')))
-const suggestions = computed(() => createPhoneticMatcher(entries.value, languages, { threshold: threshold.value })(transcript.value))
-// A near-zero threshold keeps the best reading of each phrase, so a near miss shows how far it is from the threshold.
-const nearest = computed(() => createPhoneticMatcher(entries.value, languages, { threshold: 0.01, limit: 10 })(transcript.value))
+const candidates = computed(() => createPhoneticMatcher(entries.value, languages, { threshold: threshold.value, guessedThreshold: guessedThreshold.value })(transcript.value))
+const suggestions = computed(() => selectSuggestions(candidates.value))
+const passing = computed(() => new Set(candidates.value.map(item => `${item.start}:${item.end}:${item.candidate}`)))
+// A near-zero threshold keeps every reading, so a near miss shows how far it is from the threshold.
+const nearest = computed(() => createPhoneticMatcher(entries.value, languages, { threshold: 0.01, guessedThreshold: 0.01, limit: 10 })(transcript.value))
 </script>
 
 <template>
@@ -85,6 +88,18 @@ const nearest = computed(() => createPhoneticMatcher(entries.value, languages, {
       as="div"
       :label="t('tamagotchi.settings.devtools.pages.phonetic-match.threshold.title')"
       :description="t('tamagotchi.settings.devtools.pages.phonetic-match.threshold.description')"
+      :format-value="value => value.toFixed(2)"
+    />
+
+    <FieldRange
+      v-model="guessedThreshold"
+      :min="0.5"
+      :max="1"
+      :step="0.01"
+      :default-value="0.7"
+      as="div"
+      :label="t('tamagotchi.settings.devtools.pages.phonetic-match.guessed-threshold.title')"
+      :description="t('tamagotchi.settings.devtools.pages.phonetic-match.guessed-threshold.description')"
       :format-value="value => value.toFixed(2)"
     />
 
@@ -135,8 +150,8 @@ const nearest = computed(() => createPhoneticMatcher(entries.value, languages, {
       </p>
       <div
         v-for="item in nearest"
-        :key="`${item.span}-${item.candidate}`"
-        :class="['flex flex-wrap items-baseline gap-2 text-sm', item.score >= threshold ? '' : 'text-neutral-400 dark:text-neutral-500']"
+        :key="`${item.start}:${item.end}:${item.candidate}`"
+        :class="['flex flex-wrap items-baseline gap-2 text-sm', passing.has(`${item.start}:${item.end}:${item.candidate}`) ? '' : 'text-neutral-400 dark:text-neutral-500']"
       >
         <span>{{ item.span }}</span>
         <span :class="['i-solar:arrow-right-linear']" />

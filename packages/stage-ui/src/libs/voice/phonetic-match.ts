@@ -21,6 +21,17 @@ export interface PhoneticUnit {
   /** UTF-16 offsets of the unit's characters in the transcript. */
   readonly start: number
   readonly end: number
+  /**
+   * The language guessed the tokens from spelling, because its dictionary does not have the word.
+   * A recognizer writes a non-word when it cannot place the sound, so such a window uses the looser threshold.
+   */
+  readonly guessed?: boolean
+}
+
+/** A suggestion with the transcript offsets of its span, so a later step can rerank and then remove overlaps. */
+export interface PhoneticCandidate extends PhoneticSuggestion {
+  readonly start: number
+  readonly end: number
 }
 
 /**
@@ -37,8 +48,13 @@ export interface PhoneticLanguage {
    * Returns `undefined` when the pronunciation uses tokens of another language, or is too short to match safely.
    */
   windows: (tokens: readonly string[]) => { readonly min: number, readonly max: number } | undefined
-  /** The cost from 0 to 1 of hearing token `a` for token `b`. Insertions and deletions cost 1. */
+  /** The cost from 0 to 1 of hearing token `a` for token `b`. An extra heard token costs 1. */
   substitutionCost: (a: string, b: string) => number
+  /**
+   * The cost from 0 to 1 of a vocabulary token that the transcript does not have, for example a dropped unstressed vowel.
+   * Omission makes every dropped token cost 1.
+   */
+  dropCost?: (expected: string) => number
 }
 
 export interface PhoneticMatchOptions {
@@ -49,21 +65,32 @@ export interface PhoneticMatchOptions {
    */
   threshold: number
   /**
-   * The most suggestions for one transcript. The conversation model reads every one, so a long list costs attention.
-   * @default 3
+   * The lowest similarity for a window with a word that the language guessed from spelling.
+   * A real word that sounds close is often just that word, but a non-word is a sign of a mishearing.
+   * @default 0.7
+   */
+  guessedThreshold: number
+  /**
+   * The most candidates for one transcript. Candidates can overlap, so a reranker can choose between two terms for one span.
+   * @default 20
    */
   limit: number
 }
 
-const defaultOptions: PhoneticMatchOptions = { threshold: 0.78, limit: 3 }
+const defaultOptions: PhoneticMatchOptions = { threshold: 0.78, guessedThreshold: 0.7, limit: 20 }
+
+const dropAll = () => 1
 
 /** Weighted edit distance, normalized to a similarity from 0 to 1. */
-function similarity(heard: readonly string[], expected: readonly string[], substitutionCost: PhoneticLanguage['substitutionCost']) {
-  let previous = Array.from({ length: expected.length + 1 }, (_, index) => index)
+function similarity(heard: readonly string[], expected: readonly string[], language: PhoneticLanguage) {
+  const dropCost = language.dropCost ?? dropAll
+  let previous = [0]
+  for (let j = 1; j <= expected.length; j++)
+    previous[j] = previous[j - 1] + dropCost(expected[j - 1])
   for (let i = 1; i <= heard.length; i++) {
     const current = [i]
     for (let j = 1; j <= expected.length; j++)
-      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + substitutionCost(heard[i - 1], expected[j - 1]))
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + dropCost(expected[j - 1]), previous[j - 1] + language.substitutionCost(heard[i - 1], expected[j - 1]))
     previous = current
   }
   return 1 - previous[expected.length] / Math.max(heard.length, expected.length)
@@ -78,11 +105,11 @@ function similarity(heard: readonly string[], expected: readonly string[], subst
  *
  * Each language reads only the pronunciations in its own tokens. Mixed-language phrases do not match.
  *
- * Returns suggestions with the highest score first. Spans do not overlap, and a span that already contains a written
- * form of the term is not suggested.
+ * Returns candidates with the highest score first. Candidates can overlap. {@link selectSuggestions} removes the overlaps.
+ * A span that already contains a written form of the term is not a candidate.
  */
 export function createPhoneticMatcher(entries: readonly PhoneticVocabularyEntry[], languages: readonly PhoneticLanguage[], options?: Partial<PhoneticMatchOptions>) {
-  const { threshold, limit } = merge(defaultOptions, options)
+  const { threshold, guessedThreshold, limit } = merge(defaultOptions, options)
   const plans = languages.map(language => ({
     language,
     targets: entries.flatMap(entry => entry.pronunciations.flatMap((tokens) => {
@@ -91,8 +118,8 @@ export function createPhoneticMatcher(entries: readonly PhoneticVocabularyEntry[
     })),
   })).filter(plan => plan.targets.length)
 
-  return (text: string): PhoneticSuggestion[] => {
-    const found: (PhoneticSuggestion & { start: number, end: number })[] = []
+  return (text: string): PhoneticCandidate[] => {
+    const found: PhoneticCandidate[] = []
     for (const { language, targets } of plans) {
       for (const run of language.units(text)) {
         for (const target of targets) {
@@ -104,8 +131,8 @@ export function createPhoneticMatcher(entries: readonly PhoneticVocabularyEntry[
               const span = text.slice(start, end)
               if (target.entry.writtenForms.some(form => span.includes(form)))
                 continue
-              const score = similarity(window.flatMap(unit => unit.tokens), target.tokens, language.substitutionCost)
-              if (score < threshold)
+              const score = similarity(window.flatMap(unit => unit.tokens), target.tokens, language)
+              if (score < (window.some(unit => unit.guessed) ? guessedThreshold : threshold))
                 continue
               const { term, description, source, writtenForms } = target.entry
               found.push({ span, candidate: writtenForms[0] ?? term, term, score: Math.round(score * 100) / 100, source, description, start, end })
@@ -115,15 +142,24 @@ export function createPhoneticMatcher(entries: readonly PhoneticVocabularyEntry[
       }
     }
 
-    // The best match claims its span first. A weaker match of the same audio is another reading, not another term.
-    const chosen: typeof found = []
-    for (const match of found.sort((a, b) => b.score - a.score)) {
-      if (chosen.length >= limit)
-        break
-      if (chosen.some(other => match.start < other.end && other.start < match.end))
-        continue
-      chosen.push(match)
-    }
-    return chosen.map(({ start: _start, end: _end, ...suggestion }) => suggestion)
+    return found.sort((a, b) => b.score - a.score).slice(0, limit)
   }
+}
+
+/**
+ * Chooses the suggestions that the conversation model reads, in the order of `candidates`.
+ *
+ * The first candidate claims its span. A later candidate for the same audio is another reading, not another term,
+ * so it is dropped. The conversation model reads every suggestion, so a long list costs attention.
+ */
+export function selectSuggestions(candidates: readonly PhoneticCandidate[], limit = 3): PhoneticSuggestion[] {
+  const chosen: PhoneticCandidate[] = []
+  for (const candidate of candidates) {
+    if (chosen.length >= limit)
+      break
+    if (chosen.some(other => candidate.start < other.end && other.start < candidate.end))
+      continue
+    chosen.push(candidate)
+  }
+  return chosen.map(({ start: _start, end: _end, ...suggestion }) => suggestion)
 }

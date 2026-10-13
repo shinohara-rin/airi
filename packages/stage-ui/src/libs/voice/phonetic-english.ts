@@ -2,6 +2,8 @@ import type { PhoneticLanguage, PhoneticUnit } from './phonetic-match'
 
 import { dictionary } from 'cmu-pronouncing-dictionary'
 
+import { guessPhones } from './letter-to-sound'
+
 /**
  * Substitution costs between ARPAbet phones.
  *
@@ -11,6 +13,11 @@ import { dictionary } from 'cmu-pronouncing-dictionary'
  */
 const STRESS_COST = 0.1
 const CONFUSABLE_COST = 0.5
+/**
+ * Fast speech drops unstressed vowels and reduces them to a schwa, for example `reconciliation` heard as `resilation`.
+ * So a dropped unstressed vowel costs less than a dropped consonant, and two unstressed vowels are confusable.
+ */
+const UNSTRESSED_DROP_COST = 0.4
 const confusableGroups = [['P', 'B'], ['T', 'D'], ['K', 'G'], ['F', 'V'], ['S', 'Z'], ['TH', 'DH'], ['SH', 'ZH'], ['CH', 'JH'], ['M', 'N', 'NG'], ['L', 'R'], ['AA', 'AO', 'AH'], ['AE', 'EH'], ['IH', 'IY'], ['UH', 'UW'], ['EY', 'EH'], ['OW', 'AO']]
 /** A phone can belong to two groups, for example `EH`, so the lookup keeps phone pairs, not group indexes. */
 const confusablePairs = new Set(confusableGroups.flatMap(group => group.flatMap(a => group.map(b => `${a} ${b}`))))
@@ -35,9 +42,9 @@ function lookup(word: string): string[] | undefined {
 
 /**
  * Splits text into runs of English words, each as ARPAbet phones from the CMU pronouncing dictionary.
+ * A word outside the dictionary gets phones guessed from its spelling, and the unit is marked as guessed.
  *
- * Only spaces join two words into one run. Punctuation, other scripts, and words outside the dictionary end a run,
- * because the matcher cannot price a word without phones.
+ * Only spaces join two words into one run. Punctuation and other scripts end a run.
  */
 function wordRuns(text: string): PhoneticUnit[][] {
   const runs: PhoneticUnit[][] = []
@@ -46,13 +53,12 @@ function wordRuns(text: string): PhoneticUnit[][] {
   for (const match of text.matchAll(WORD)) {
     const start = match.index
     const end = start + match[0].length
-    const tokens = lookup(match[0])
-    if (run.length && (!tokens || !/^ +$/.test(text.slice(previousEnd, start)))) {
+    if (run.length && !/^ +$/.test(text.slice(previousEnd, start))) {
       runs.push(run)
       run = []
     }
-    if (tokens)
-      run.push({ tokens, start, end })
+    const tokens = lookup(match[0])
+    run.push(tokens ? { tokens, start, end } : { tokens: guessPhones(match[0]), start, end, guessed: true })
     previousEnd = end
   }
   if (run.length)
@@ -81,24 +87,27 @@ export const english: PhoneticLanguage = {
     const baseB = stressless(b)
     if (baseA === baseB)
       return STRESS_COST
-    return confusablePairs.has(`${baseA} ${baseB}`) ? CONFUSABLE_COST : 1
+    if (confusablePairs.has(`${baseA} ${baseB}`))
+      return CONFUSABLE_COST
+    return a.endsWith('0') && b.endsWith('0') ? CONFUSABLE_COST : 1
   },
+  dropCost: expected => expected.endsWith('0') ? UNSTRESSED_DROP_COST : 1,
 }
 
 /**
  * Converts English text to model tokens. Vocabulary packs use it when an entry has only written forms.
- * Returns `undefined` when any word is outside the dictionary, because a partial pronunciation matches the wrong text.
+ * A word outside the dictionary gets phones guessed from its spelling. A pack can give exact phones for such a term.
+ * Returns `undefined` when the text has characters other than English words, spaces, and hyphens.
  *
  * @example
  * pronounceEnglish('Sulfur Cube')
  * // => ['S', 'AH1', 'L', 'F', 'ER0', 'K', 'Y', 'UW1', 'B']
  * pronounceEnglish('Zustand')
- * // => undefined
+ * // => ['Z', 'AH1', 'S', 'T', 'AE0', 'N', 'D']
  */
 export function pronounceEnglish(text: string): string[] | undefined {
   const words = text.match(WORD)
   if (!words || words.join('').length !== text.replace(/[\s-]/g, '').length)
     return undefined
-  const phones = words.map(lookup)
-  return phones.every(tokens => tokens !== undefined) ? phones.flat() : undefined
+  return words.flatMap(word => lookup(word) ?? guessPhones(word))
 }

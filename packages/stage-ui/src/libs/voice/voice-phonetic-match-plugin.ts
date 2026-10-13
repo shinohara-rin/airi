@@ -1,6 +1,6 @@
 import type { VoicePlugin } from '@proj-airi/core-agent'
 
-import type { PhoneticLanguage, PhoneticSuggestion } from './phonetic-match'
+import type { PhoneticCandidate, PhoneticLanguage, PhoneticSuggestion } from './phonetic-match'
 import type { PhoneticVocabularyEntry } from './phonetic-vocabulary'
 
 /** Context key of the published suggestions. The chat prompt reads it through the submission context. */
@@ -24,12 +24,12 @@ const NOTE = 'Speech recognition can mishear these spans. Each candidate sounds 
  */
 async function loadMatcher(entries: readonly PhoneticVocabularyEntry[]) {
   const needsEnglish = entries.some(entry => entry.pronunciations.some(tokens => tokens.some(token => token !== token.toLowerCase())))
-  const [{ createPhoneticMatcher }, { mandarin }, english] = await Promise.all([
+  const [{ createPhoneticMatcher, selectSuggestions }, { mandarin }, english] = await Promise.all([
     import('./phonetic-match'),
     import('./phonetic-mandarin'),
     needsEnglish ? import('./phonetic-english').then(module => module.english) : undefined,
   ])
-  return createPhoneticMatcher(entries, english ? [mandarin, english] : [mandarin])
+  return { match: createPhoneticMatcher(entries, english ? [mandarin, english] : [mandarin]), selectSuggestions }
 }
 
 export interface VoicePhoneticMatchOptions {
@@ -43,6 +43,13 @@ export interface VoicePhoneticMatchOptions {
    * @default 1000
    */
   timeoutMs?: number
+  /**
+   * Reorders the candidates by meaning, for example with a small language model and the recent conversation.
+   * Sound alone cannot choose between near ties, such as `reconciliation` and `recognition` for `resilation`.
+   * The result can drop candidates. The first three that do not overlap become suggestions.
+   * Omission keeps the order by phonetic score.
+   */
+  rerank?: (request: { readonly text: string, readonly candidates: readonly PhoneticCandidate[] }, signal: AbortSignal) => Promise<readonly PhoneticCandidate[]>
 }
 
 /**
@@ -64,12 +71,12 @@ export interface VoicePhoneticMatchOptions {
 export function createVoicePhoneticMatchPlugin(options: VoicePhoneticMatchOptions): VoicePlugin {
   const timeoutMs = options.timeoutMs ?? 1000
   /** One matcher per vocabulary array. A new array from `vocabulary()` replaces it on the next input. */
-  let cached: { entries: readonly PhoneticVocabularyEntry[], match: Promise<(text: string) => PhoneticSuggestion[]> } | undefined
+  let cached: { entries: readonly PhoneticVocabularyEntry[], matcher: ReturnType<typeof loadMatcher> } | undefined
 
   function matcherFor(entries: readonly PhoneticVocabularyEntry[]) {
     if (cached?.entries !== entries)
-      cached = { entries, match: loadMatcher(entries) }
-    return cached.match
+      cached = { entries, matcher: loadMatcher(entries) }
+    return cached.matcher
   }
 
   return {
@@ -85,9 +92,12 @@ export function createVoicePhoneticMatchPlugin(options: VoicePhoneticMatchOption
           if (!segments.length || segments.some(segment => !segment.final) || !text.trim())
             return
 
-          const match = await matcherFor(entries)
+          const { match, selectSuggestions } = await matcherFor(entries)
           ctx.signal.throwIfAborted()
-          const items = match(text)
+          const candidates = match(text)
+          const ranked = options.rerank && candidates.length ? await options.rerank({ text, candidates }, ctx.signal) : candidates
+          ctx.signal.throwIfAborted()
+          const items = selectSuggestions(ranked)
           if (items.length)
             ctx.context.set<PhoneticSuggestions>(PHONETIC_SUGGESTIONS_KEY, { note: NOTE, items })
           else

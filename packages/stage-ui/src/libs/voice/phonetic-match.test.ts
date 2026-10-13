@@ -1,3 +1,4 @@
+import type { PhoneticLanguage } from './phonetic-match'
 import type { PhoneticVocabularyEntry } from './phonetic-vocabulary'
 
 import { describe, expect, it } from 'vitest'
@@ -5,8 +6,14 @@ import { describe, expect, it } from 'vitest'
 import { kwsVocabulary } from './kws-model'
 import { english, pronounceEnglish } from './phonetic-english'
 import { mandarin, pronounceChinese } from './phonetic-mandarin'
-import { createPhoneticMatcher } from './phonetic-match'
+import { createPhoneticMatcher, selectSuggestions } from './phonetic-match'
 import { importVocabularyPack } from './phonetic-vocabulary'
+
+/** Matches and then chooses suggestions, as the voice plugin does without a reranker. */
+function createSuggester(entries: readonly PhoneticVocabularyEntry[], languages: readonly PhoneticLanguage[], limit?: number) {
+  const match = createPhoneticMatcher(entries, languages)
+  return (text: string) => selectSuggestions(match(text), limit)
+}
 
 const sulfurCube: PhoneticVocabularyEntry = {
   term: 'Sulfur Cube',
@@ -26,7 +33,7 @@ const creeper: PhoneticVocabularyEntry = {
 
 describe('createPhoneticMatcher', () => {
   it('suggests 硫方怪 for the plausible mishearing 流氓怪', () => {
-    const match = createPhoneticMatcher([sulfurCube, creeper], [mandarin])
+    const match = createSuggester([sulfurCube, creeper], [mandarin])
 
     const [suggestion, ...rest] = match('我刚才在温泉边遇到了一只流氓怪')
 
@@ -39,31 +46,31 @@ describe('createPhoneticMatcher', () => {
   })
 
   it('does not suggest a term that the transcript already spells correctly', () => {
-    const match = createPhoneticMatcher([sulfurCube], [mandarin])
+    const match = createSuggester([sulfurCube], [mandarin])
 
     expect(match('我遇到了一只硫方怪')).toEqual([])
   })
 
   it('ignores text that sounds different', () => {
-    const match = createPhoneticMatcher([sulfurCube, creeper], [mandarin])
+    const match = createSuggester([sulfurCube, creeper], [mandarin])
 
     expect(match('今天天气很好，我们去公园散步吧')).toEqual([])
   })
 
   it('treats a tone change as almost the same sound', () => {
-    const match = createPhoneticMatcher([creeper], [mandarin])
+    const match = createSuggester([creeper], [mandarin])
 
     expect(match('有个酷力爬在后面')[0]?.candidate).toBe('苦力怕')
   })
 
   it('skips a pronunciation in the tokens of another language', () => {
-    const match = createPhoneticMatcher([{ ...creeper, pronunciations: [['K', 'R', 'IY1', 'P', 'ER0']] }], [mandarin])
+    const match = createSuggester([{ ...creeper, pronunciations: [['K', 'R', 'IY1', 'P', 'ER0']] }], [mandarin])
 
     expect(match('有个酷力爬在后面')).toEqual([])
   })
 
   it('returns the best non-overlapping suggestions up to the limit', () => {
-    const match = createPhoneticMatcher([sulfurCube, creeper], [mandarin], { limit: 1 })
+    const match = createSuggester([sulfurCube, creeper], [mandarin], 1)
 
     const suggestions = match('流氓怪和酷力爬')
 
@@ -89,7 +96,7 @@ describe('createPhoneticMatcher with English', () => {
   }
 
   it('matches a term that the recognizer split into common words', () => {
-    const match = createPhoneticMatcher([zustand, memoize], [mandarin, english])
+    const match = createSuggester([zustand, memoize], [mandarin, english])
 
     const suggestions = match('I keep my state in zoo stand, and I memo eyes the selectors.')
 
@@ -100,15 +107,29 @@ describe('createPhoneticMatcher with English', () => {
   })
 
   it('matches English words inside a Chinese transcript', () => {
-    const match = createPhoneticMatcher([zustand, sulfurCube], [mandarin, english])
+    const match = createSuggester([zustand, sulfurCube], [mandarin, english])
 
     const suggestions = match('我用 zoo stand 管理状态，还遇到了流氓怪')
 
     expect(suggestions.map(item => item.candidate).sort()).toEqual(['Zustand', '硫方怪'])
   })
 
+  it('matches a non-word with dropped sounds', () => {
+    const reconciliation: PhoneticVocabularyEntry = { term: 'reconciliation', writtenForms: ['reconciliation'], pronunciations: [['R', 'EH2', 'K', 'AH0', 'N', 'S', 'IH2', 'L', 'IY0', 'EY1', 'SH', 'AH0', 'N']], description: 'Matching two sets of records so they agree.', source: 'finance' }
+    const match = createSuggester([reconciliation], [english])
+
+    expect(match('we need to finish the resilation today')[0]?.span).toBe('resilation')
+  })
+
+  it('keeps a real word that sounds a little like a term', () => {
+    const reconciliation: PhoneticVocabularyEntry = { term: 'reconciliation', writtenForms: ['reconciliation'], pronunciations: [['R', 'EH2', 'K', 'AH0', 'N', 'S', 'IH2', 'L', 'IY0', 'EY1', 'SH', 'AH0', 'N']], description: 'Matching two sets of records so they agree.', source: 'finance' }
+    const match = createSuggester([reconciliation], [english])
+
+    expect(match('speech recognition is hard')).toEqual([])
+  })
+
   it('ignores ordinary English text', () => {
-    const match = createPhoneticMatcher([zustand, memoize], [mandarin, english])
+    const match = createSuggester([zustand, memoize], [mandarin, english])
 
     expect(match('I use React with a reducer and a context provider.')).toEqual([])
   })

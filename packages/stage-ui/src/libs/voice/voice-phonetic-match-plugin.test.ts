@@ -2,6 +2,7 @@ import type { SpeechInputAttempt, SpeechSubmission, TranscriptionEvent } from '@
 import type { PcmBlock } from '@proj-airi/pipelines-audio'
 
 import type { PhoneticVocabularyEntry } from './phonetic-vocabulary'
+import type { VoicePhoneticMatchOptions } from './voice-phonetic-match-plugin'
 
 import { VoiceController } from '@proj-airi/core-agent'
 import { AudioInput, createPushStream } from '@proj-airi/pipelines-audio'
@@ -17,14 +18,14 @@ const sulfurCube: PhoneticVocabularyEntry = {
   source: 'minecraft-wiki',
 }
 
-function createHarness(vocabulary: readonly PhoneticVocabularyEntry[]) {
+function createHarness(vocabulary: readonly PhoneticVocabularyEntry[], rerank?: VoicePhoneticMatchOptions['rerank']) {
   const source = createPushStream<PcmBlock>()
   const audio = new AudioInput({ live: true, open: () => source.stream })
   const output = createPushStream<TranscriptionEvent>()
   const submit = vi.fn(async (_submission: SpeechSubmission) => ({ status: 'drafted' as const, draftId: 'draft' }))
   const controller = new VoiceController({ audio, submit, transcriber: () => ({ transcribe: () => output.stream }) })
   const onError = vi.fn()
-  controller.use(createVoicePhoneticMatchPlugin({ vocabulary: () => vocabulary }), { onError })
+  controller.use(createVoicePhoneticMatchPlugin({ vocabulary: () => vocabulary, rerank }), { onError })
 
   async function speak(text: string): Promise<SpeechInputAttempt> {
     const attempt = controller.beginInput({ sessionId: 'alice', interruptTurns: [], start: { kind: 'after-silence' } })
@@ -58,6 +59,19 @@ describe('createVoicePhoneticMatchPlugin', () => {
       },
     })])
     expect(onError).not.toHaveBeenCalled()
+    await controller.close()
+  })
+
+  it('lets a reranker choose between two terms for the same span', async () => {
+    // By sound alone, 六芒怪 is closer to 流氓怪 than 硫方怪 is. Only meaning can prefer 硫方怪.
+    const hexagram: PhoneticVocabularyEntry = { ...sulfurCube, term: 'Hexagram Mob', writtenForms: ['六芒怪'], pronunciations: [['l', 'iù', 'm', 'áng', 'g', 'uài']], description: 'A mob from another game.' }
+    const rerank = vi.fn<NonNullable<VoicePhoneticMatchOptions['rerank']>>(async ({ candidates }) => candidates.filter(item => item.candidate === '硫方怪'))
+    const { controller, submit, speak } = createHarness([sulfurCube, hexagram], rerank)
+
+    await speak('我遇到了一只流氓怪')
+
+    expect(rerank.mock.calls[0][0].candidates[0].candidate).toBe('六芒怪')
+    expect(submit.mock.calls[0][0].context[0].value).toEqual(expect.objectContaining({ items: [expect.objectContaining({ span: '流氓怪', candidate: '硫方怪' })] }))
     await controller.close()
   })
 
