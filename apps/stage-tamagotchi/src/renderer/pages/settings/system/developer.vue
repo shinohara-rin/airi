@@ -87,6 +87,12 @@ const menu = computed(() => [
     to: '/devtools/transcription-bias',
   },
   {
+    title: 'ASR Uncertainty Probe',
+    description: 'Decode a clip many times with noise and find the spans that speech recognition is unsure of',
+    icon: 'i-solar:soundwave-bold-duotone',
+    to: '/devtools/asr-uncertainty',
+  },
+  {
     title: 'Beat Sync Visualizer',
     description: 'Plot V-motion targets, trajectory, and scalar Y/Z over time',
     icon: 'i-solar:chart-bold-duotone',
@@ -187,6 +193,15 @@ const openEditor = useElectronEventaInvoke(electronOpenEditor)
     @click="() => openDevtoolsWindow({ key: 'io-tracer', route: '/devtools/io-tracer', width: 1600, height: 900 })"
   >
     {{ t('tamagotchi.settings.devtools.pages.io-tracer.title') }}
+  </ButtonBar>
+  <ButtonBar
+    :class="['mb-2', 'transition-all duration-250 ease-in-out']"
+    icon="i-solar:soundwave-bold-duotone"
+    :text="t('tamagotchi.settings.devtools.pages.phonetic-match.title')"
+    :description="t('tamagotchi.settings.devtools.pages.phonetic-match.description')"
+    @click="() => openDevtoolsWindow({ key: 'phonetic-match', route: '/devtools/phonetic-match' })"
+  >
+    {{ t('tamagotchi.settings.devtools.pages.phonetic-match.title') }}
   </ButtonBar>
   <CheckBar
     :model-value="ioTraceRecording?.enabled ?? false"
