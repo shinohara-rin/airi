@@ -81,6 +81,12 @@ const menu = computed(() => [
     to: '/devtools/providers-transcription-realtime-aliyun-nls',
   },
   {
+    title: 'Transcription Bias',
+    description: 'Inspect the conversation terms that bias speech recognition, and compare a clip with and without them',
+    icon: 'i-solar:text-field-focus-bold-duotone',
+    to: '/devtools/transcription-bias',
+  },
+  {
     title: 'Beat Sync Visualizer',
     description: 'Plot V-motion targets, trajectory, and scalar Y/Z over time',
     icon: 'i-solar:chart-bold-duotone',

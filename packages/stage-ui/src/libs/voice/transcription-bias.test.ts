@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { collectConversationHotwords, TranscriptionBiasList } from './transcription-bias'
+import { collectConversationHotwords, rankConversationTerms, TranscriptionBiasList } from './transcription-bias'
 
 describe('collectConversationHotwords', () => {
   it('collects names and specific terms but not ordinary words or sentence starts', () => {
@@ -33,6 +33,17 @@ describe('collectConversationHotwords', () => {
     expect(collectConversationHotwords([
       { role: 'user', text: 'Zustand is small. Today I tried Zustand. Sulfur Cube spawns here. I met the Sulfur Cube.' },
     ])).toEqual(['Zustand', 'Sulfur Cube'])
+  })
+
+  it('reports the score and the qualifying form of each term', () => {
+    expect(rankConversationTerms([
+      { role: 'user', text: 'Is 「硫方怪」 like a Sulfur Cube in ASR?' },
+      { role: 'assistant', text: 'Yes, the Sulfur Cube is new.' },
+    ])).toEqual([
+      { phrase: 'Sulfur Cube', score: 3, form: 'name' },
+      { phrase: '硫方怪', score: 1, form: 'quoted' },
+      { phrase: 'ASR', score: 1, form: 'identifier' },
+    ])
   })
 
   it('cuts the list to the limit', () => {

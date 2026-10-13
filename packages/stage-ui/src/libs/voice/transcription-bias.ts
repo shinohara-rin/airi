@@ -1,4 +1,6 @@
-import type { TranscriptionBias } from '@proj-airi/core-agent'
+import type { ChatHistoryItem, TranscriptionBias } from '@proj-airi/core-agent'
+
+import { extractMessageText } from '../chat-sync/wire-message'
 
 /**
  * Supplies phrases that a session's next speech recognition request prefers.
@@ -13,9 +15,15 @@ export interface HotwordSource {
   collect: (sessionId: string, signal: AbortSignal) => Promise<readonly string[]>
 }
 
-interface ConversationMessage {
+/** A chat message reduced to its role and plain text. */
+export interface ConversationMessage {
   readonly role: string
   readonly text: string
+}
+
+/** Reduces stored chat messages to the role and text that term extraction reads. */
+export function conversationMessagesOf(messages: readonly ChatHistoryItem[]): ConversationMessage[] {
+  return messages.map(message => ({ role: message.role, text: extractMessageText(message) }))
 }
 
 /**
@@ -42,56 +50,81 @@ const QUOTED_SPAN = /[“「『《【"`]([^“”「」『』《》【】"`\n]{2
 const LATIN_TERM = /[A-Z][\w'+#-]*(?:\.[A-Z]\w*)*[+#]*/gi
 
 /**
- * Collects names and rare terms that the conversation already contains, newest and most frequent first.
+ * The written form that qualified a conversation term.
+ *
+ * - `quoted`: a quoted or bracketed span, in any script.
+ * - `identifier`: CamelCase, an acronym, a word with digits, or a joined name such as `React.js`.
+ * - `name`: a run of capitalized words.
+ */
+export type ConversationTermForm = 'quoted' | 'identifier' | 'name'
+
+/** One ranked conversation term. Devtools show the score and the form to explain the list. */
+export interface ConversationTerm {
+  readonly phrase: string
+  /** Sum of the recency weights of its occurrences. Each occurrence adds 1 to 2. */
+  readonly score: number
+  /** The form of the first occurrence. */
+  readonly form: ConversationTermForm
+}
+
+/**
+ * Ranks names and rare terms that the conversation already contains, newest and most frequent first.
  *
  * A term qualifies when its written form marks it as specific. These forms are quoted or bracketed spans,
  * CamelCase or mixed-case words, acronyms, words with digits or joiners, and runs of capitalized words
  * inside a sentence. Plain lowercase words and CJK text outside quotes do not qualify, because
  * nothing in their form separates a name from ordinary speech.
- *
- * @example
- * collectConversationHotwords([{ role: 'user', text: 'I built a store with Zustand and React.js. Ask Sulfur Cube fans.' }])
- * // => ['Zustand', 'React.js', 'Sulfur Cube']
  */
-export function collectConversationHotwords(messages: readonly ConversationMessage[], limit = CONVERSATION_LIMITS.phrases): string[] {
-  const scores = new Map<string, { phrase: string, score: number, order: number }>()
+export function rankConversationTerms(messages: readonly ConversationMessage[], limit = CONVERSATION_LIMITS.phrases): ConversationTerm[] {
+  const scores = new Map<string, { phrase: string, score: number, order: number, form: ConversationTermForm }>()
   const recent = messages.filter(message => message.role === 'user' || message.role === 'assistant').slice(-CONVERSATION_LIMITS.messages)
   // A first pass finds the capitalized words that also appear inside a sentence. Only these can count at a sentence start.
-  const names = new Set(recent.flatMap(message => termsOf(message.text, new Set())).flatMap(term => term.toLocaleLowerCase().split(' ')))
+  const names = new Set(recent.flatMap(message => termsOf(message.text, new Set())).flatMap(term => term.phrase.toLocaleLowerCase().split(' ')))
   let order = 0
 
   recent.forEach((message, index) => {
     // Newer messages weigh more. The newest message counts twice as much as the oldest one in the window.
     const weight = 1 + index / Math.max(1, recent.length - 1)
-    for (const phrase of termsOf(message.text, names)) {
+    for (const { phrase, form } of termsOf(message.text, names)) {
       const key = phrase.toLocaleLowerCase()
       const entry = scores.get(key)
       if (entry)
         entry.score += weight
       else
-        scores.set(key, { phrase, score: weight, order: order++ })
+        scores.set(key, { phrase, score: weight, order: order++, form })
     }
   })
 
   return [...scores.values()]
     .sort((left, right) => right.score - left.score || left.order - right.order)
     .slice(0, limit)
-    .map(entry => entry.phrase)
+    .map(({ phrase, score, form }) => ({ phrase, score, form }))
 }
 
-function termsOf(text: string, names: ReadonlySet<string>): string[] {
-  const terms: string[] = []
+/**
+ * Collects the phrases of {@link rankConversationTerms} in rank order.
+ *
+ * @example
+ * collectConversationHotwords([{ role: 'user', text: 'I built a store with Zustand and React.js. Ask Sulfur Cube fans.' }])
+ * // => ['Zustand', 'React.js', 'Sulfur Cube']
+ */
+export function collectConversationHotwords(messages: readonly ConversationMessage[], limit = CONVERSATION_LIMITS.phrases): string[] {
+  return rankConversationTerms(messages, limit).map(term => term.phrase)
+}
+
+function termsOf(text: string, names: ReadonlySet<string>): { phrase: string, form: ConversationTermForm }[] {
+  const terms: { phrase: string, form: ConversationTermForm }[] = []
   for (const match of text.matchAll(QUOTED_SPAN)) {
     const span = match[1].trim()
     if (isPhrase(span))
-      terms.push(span)
+      terms.push({ phrase: span, form: 'quoted' })
   }
 
   for (const sentence of text.split(/(?<=[.!?])\s+|(?<=[。！？\n])/u)) {
     let run: string[] = []
     const flush = () => {
       if (run.length && isPhrase(run.join(' ')))
-        terms.push(run.join(' '))
+        terms.push({ phrase: run.join(' '), form: 'name' })
       run = []
     }
 
@@ -106,7 +139,7 @@ function termsOf(text: string, names: ReadonlySet<string>): string[] {
 
       if (isSpecificForm(word)) {
         flush()
-        terms.push(word)
+        terms.push({ phrase: word, form: 'identifier' })
         continue
       }
       // Grammar capitalizes the first word of a sentence, so a capital there marks a name only when

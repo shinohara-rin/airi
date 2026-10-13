@@ -14,9 +14,8 @@ import { traceSpeechOutput } from '../composables/speech-output-trace'
 import { useVoiceDrafts } from '../composables/voice-drafts'
 import { useVoiceEndJudge } from '../composables/voice-end-judge'
 import { useVoiceRephrase } from '../composables/voice-rephrase'
-import { extractMessageText } from '../libs/chat-sync'
 import { observeInputLevel } from '../libs/voice/input-level'
-import { collectConversationHotwords, TranscriptionBiasList } from '../libs/voice/transcription-bias'
+import { collectConversationHotwords, conversationMessagesOf, TranscriptionBiasList } from '../libs/voice/transcription-bias'
 import { createVoiceActivityPlugin } from '../libs/voice/voice-activity-plugin'
 import { createVoiceEndJudgePlugin } from '../libs/voice/voice-end-judge-plugin'
 import { createVoiceRephrasePlugin } from '../libs/voice/voice-rephrase-plugin'
@@ -82,7 +81,7 @@ export const useVoiceStore = defineStore('voice', () => {
       const messages = sessions.getSessionMessagesIfLoaded(sessionId)
       if (!messages)
         return []
-      return collectConversationHotwords(messages.map(message => ({ role: message.role, text: extractMessageText(message) })))
+      return collectConversationHotwords(conversationMessagesOf(messages))
     },
   }], { onError: (source, cause) => console.warn(`[voice] Hotword source ${source} failed`, cause) })
   const stopBiasRebuild = chat.onChatTurnComplete(async (_chat, context) => {
