@@ -119,8 +119,11 @@ function termsOf(text: string, names: ReadonlySet<string>): { phrase: string, fo
     if (isPhrase(span))
       terms.push({ phrase: span, form: 'quoted' })
   }
+  // A quoted span counts once. A word joiner replaces it, so the Latin scan below does not count its words again.
+  // The joiner is not white space, so it also breaks a run of capitalized words and is not a sentence start.
+  const unquoted = text.replace(QUOTED_SPAN, '\u2060')
 
-  for (const sentence of text.split(/(?<=[.!?])\s+|(?<=[。！？\n])/u)) {
+  for (const sentence of unquoted.split(/(?<=[.!?])\s+|(?<=[。！？\n])/u)) {
     let run: string[] = []
     const flush = () => {
       if (run.length && isPhrase(run.join(' ')))
@@ -183,7 +186,7 @@ function isPhrase(value: string) {
  * - `pending` holds the rebuild in flight for each session. A new rebuild aborts the older one, so a slow
  *   source cannot overwrite a newer list.
  *
- * The owner calls {@link rebuild} after each assistant turn and when a session becomes active.
+ * The owner calls {@link rebuild} when a session's messages change, and {@link forget} when a session goes away.
  * {@link dispose} aborts the rebuilds in flight and clears every list.
  */
 export class TranscriptionBiasList {
@@ -234,6 +237,13 @@ export class TranscriptionBiasList {
       }
     })
     this.lists.set(sessionId, Object.freeze({ phrases: Object.freeze(phrases) }))
+  }
+
+  /** Aborts the session's rebuild in flight and removes its list. */
+  forget(sessionId: string) {
+    this.pending.get(sessionId)?.abort('Session removed')
+    this.pending.delete(sessionId)
+    this.lists.delete(sessionId)
   }
 
   dispose() {

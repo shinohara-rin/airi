@@ -46,6 +46,13 @@ describe('collectConversationHotwords', () => {
     ])
   })
 
+  it('counts a quoted identifier once', () => {
+    expect(rankConversationTerms([{ role: 'user', text: 'Try “ASR” with Whisper.' }])).toEqual([
+      { phrase: 'ASR', score: 1, form: 'quoted' },
+      { phrase: 'Whisper', score: 1, form: 'name' },
+    ])
+  })
+
   it('cuts the list to the limit', () => {
     expect(collectConversationHotwords([{ role: 'user', text: 'Compare ASR, TTS, and VAD.' }], 2)).toEqual(['ASR', 'TTS'])
   })
@@ -88,6 +95,21 @@ describe('transcriptionBiasList', () => {
     first.resolve(['Vue'])
     await older
     expect(list.read('alice')).toEqual({ phrases: ['Pinia'] })
+  })
+
+  it('forgets a session and ignores its rebuild in flight', async () => {
+    const pending = Promise.withResolvers<readonly string[]>()
+    const collect = vi.fn()
+      .mockResolvedValueOnce(['Vue'])
+      .mockReturnValueOnce(pending.promise)
+    const list = new TranscriptionBiasList([{ name: 'conversation', collect }])
+
+    await list.rebuild('alice')
+    const inFlight = list.rebuild('alice')
+    list.forget('alice')
+    pending.resolve(['Pinia'])
+    await inFlight
+    expect(list.read('alice')).toBeUndefined()
   })
 
   it('caps the merged list at the limit', async () => {

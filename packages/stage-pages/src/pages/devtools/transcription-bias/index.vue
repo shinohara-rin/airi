@@ -142,10 +142,13 @@ function compare() {
     void comparison.compare(clip.value, bias.value)
 }
 
-/** Bias phrases that occur in a transcript, compared without case. */
+/** The phrases that the shown comparison sent, so later edits of the list do not change its results. */
+const comparedPhrases = computed(() => comparison.runs.value.find(run => run.bias)?.bias?.phrases ?? [])
+
+/** Compared phrases that occur in a transcript, compared without case. */
 function foundPhrases(text: string | undefined) {
   const lower = text?.toLocaleLowerCase() ?? ''
-  return bias.value.filter(phrase => lower.includes(phrase.toLocaleLowerCase()))
+  return comparedPhrases.value.filter(phrase => lower.includes(phrase.toLocaleLowerCase()))
 }
 const gained = computed(() => {
   const [plain, biased] = comparison.runs.value
