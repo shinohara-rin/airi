@@ -32,8 +32,11 @@ export interface PhoneticUnit {
 export interface PhoneticLanguage {
   /** Splits transcript text into runs of units. A match window never crosses two runs. */
   units: (text: string) => PhoneticUnit[][]
-  /** Counts the units of a vocabulary pronunciation. Returns 0 when the pronunciation uses tokens of another language. */
-  countUnits: (tokens: readonly string[]) => number
+  /**
+   * The transcript window sizes, in units, that can sound like a vocabulary pronunciation.
+   * Returns `undefined` when the pronunciation uses tokens of another language, or is too short to match safely.
+   */
+  windows: (tokens: readonly string[]) => { readonly min: number, readonly max: number } | undefined
   /** The cost from 0 to 1 of hearing token `a` for token `b`. Insertions and deletions cost 1. */
   substitutionCost: (a: string, b: string) => number
 }
@@ -70,9 +73,8 @@ function similarity(heard: readonly string[], expected: readonly string[], subst
  * Creates a matcher that compares every unit n-gram of a transcript with every vocabulary pronunciation.
  *
  * The matcher checks each phrase, not only text that looks wrong, because a mishearing is often a plausible word,
- * for example `流氓怪` for `硫方怪`. A window covers one unit less to one unit more than the pronunciation,
- * so a dropped or an extra unit still matches. Pronunciations shorter than two units are skipped, because a
- * single syllable sounds like too many words.
+ * for example `流氓怪` for `硫方怪`. Each language chooses the window sizes for a pronunciation, so a dropped or an
+ * extra unit still matches.
  *
  * Each language reads only the pronunciations in its own tokens. Mixed-language phrases do not match.
  *
@@ -83,8 +85,10 @@ export function createPhoneticMatcher(entries: readonly PhoneticVocabularyEntry[
   const { threshold, limit } = merge(defaultOptions, options)
   const plans = languages.map(language => ({
     language,
-    targets: entries.flatMap(entry => entry.pronunciations.map(tokens => ({ entry, tokens, units: language.countUnits(tokens) })))
-      .filter(target => target.units >= 2),
+    targets: entries.flatMap(entry => entry.pronunciations.flatMap((tokens) => {
+      const windows = language.windows(tokens)
+      return windows ? [{ entry, tokens, windows }] : []
+    })),
   })).filter(plan => plan.targets.length)
 
   return (text: string): PhoneticSuggestion[] => {
@@ -92,7 +96,7 @@ export function createPhoneticMatcher(entries: readonly PhoneticVocabularyEntry[
     for (const { language, targets } of plans) {
       for (const run of language.units(text)) {
         for (const target of targets) {
-          for (let size = target.units - 1; size <= target.units + 1; size++) {
+          for (let size = target.windows.min; size <= target.windows.max; size++) {
             for (let first = 0; first + size <= run.length; first++) {
               const window = run.slice(first, first + size)
               const start = window[0].start

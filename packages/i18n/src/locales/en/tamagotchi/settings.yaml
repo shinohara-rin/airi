@@ -80,10 +80,10 @@ devtools:
       description: Match a transcript against a vocabulary pack and see the term suggestions that the chat model receives
       transcript:
         title: Transcript
-        description: Text as the speech recognizer wrote it. Only Chinese text matches for now.
+        description: Text as the speech recognizer wrote it. Chinese and English text match. A phrase that mixes the two does not.
       pack:
         title: Vocabulary pack
-        description: 'JSON with a source and entries. An entry without pronunciations gets them from its Chinese written forms.'
+        description: 'JSON with a source and entries. An entry without pronunciations gets them from its Chinese or English written forms.'
         invalid: The pack is not valid
         entries: '{count} entries loaded'
       threshold:

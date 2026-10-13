@@ -663,6 +663,9 @@ catalogs:
     clustr:
       specifier: ^1.0.2
       version: 1.0.2
+    cmu-pronouncing-dictionary:
+      specifier: ^3.0.0
+      version: 3.0.0
     colorjs.io:
       specifier: ^0.7.1
       version: 0.7.1
@@ -4981,6 +4984,9 @@ importers:
       better-auth:
         specifier: 'catalog:'
         version: 1.6.25(@opentelemetry/api@1.9.1)(@prisma/client@5.22.0)(better-sqlite3@12.11.1)(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@electric-sql/pglite@0.5.6)(@opentelemetry/api@1.9.1)(@prisma/client@5.22.0)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(kysely@0.29.5)(pg@8.23.0)(postgres@3.4.9))(pg@8.23.0)(vitest@4.1.11)(vue@3.5.41(typescript@6.0.3))
+      cmu-pronouncing-dictionary:
+        specifier: 'catalog:'
+        version: 3.0.0
       culori:
         specifier: 'catalog:'
         version: 4.0.2
@@ -13944,6 +13950,9 @@ packages:
   clustr@1.0.2:
     resolution: {integrity: sha512-Zvxo5inxwvoGMI0R+cXV+5nVbl/Gw7zYV1Msn9mn7loC6CK941CjvsBplgClJV83T4UXID+SXhtfVulfaBat5w==}
     engines: {node: '>=22.10.0'}
+
+  cmu-pronouncing-dictionary@3.0.0:
+    resolution: {integrity: sha512-6y5X4OxsYFnHERo6WSVPnLrk53G07MOQ8aUb2z555JgwynpbZsHR0a//WdN6DUcmE1j2auTF2TtL4PpoKze8QQ==}
 
   color-convert@2.0.1:
     resolution: {integrity: sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ==}
@@ -28617,6 +28626,8 @@ snapshots:
   cluster-key-slot@1.1.1: {}
 
   clustr@1.0.2: {}
+
+  cmu-pronouncing-dictionary@3.0.0: {}
 
   color-convert@2.0.1:
     dependencies:

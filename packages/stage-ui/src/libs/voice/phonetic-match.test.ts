@@ -3,6 +3,7 @@ import type { PhoneticVocabularyEntry } from './phonetic-vocabulary'
 import { describe, expect, it } from 'vitest'
 
 import { kwsVocabulary } from './kws-model'
+import { english, pronounceEnglish } from './phonetic-english'
 import { mandarin, pronounceChinese } from './phonetic-mandarin'
 import { createPhoneticMatcher } from './phonetic-match'
 import { importVocabularyPack } from './phonetic-vocabulary'
@@ -71,6 +72,48 @@ describe('createPhoneticMatcher', () => {
   })
 })
 
+describe('createPhoneticMatcher with English', () => {
+  const zustand: PhoneticVocabularyEntry = {
+    term: 'Zustand',
+    writtenForms: ['Zustand'],
+    pronunciations: [['Z', 'UW1', 'S', 'T', 'AE2', 'N', 'D']],
+    description: 'A small state library for React.',
+    source: 'llm-guess',
+  }
+  const memoize: PhoneticVocabularyEntry = {
+    term: 'memoize',
+    writtenForms: ['memoize'],
+    pronunciations: [['M', 'EH1', 'M', 'AH0', 'AY2', 'Z']],
+    description: 'Cache the result of a function for the same inputs.',
+    source: 'llm-guess',
+  }
+
+  it('matches a term that the recognizer split into common words', () => {
+    const match = createPhoneticMatcher([zustand, memoize], [mandarin, english])
+
+    const suggestions = match('I keep my state in zoo stand, and I memo eyes the selectors.')
+
+    expect(suggestions.map(item => [item.span, item.candidate])).toEqual([
+      ['zoo stand', 'Zustand'],
+      ['memo eyes', 'memoize'],
+    ])
+  })
+
+  it('matches English words inside a Chinese transcript', () => {
+    const match = createPhoneticMatcher([zustand, sulfurCube], [mandarin, english])
+
+    const suggestions = match('我用 zoo stand 管理状态，还遇到了流氓怪')
+
+    expect(suggestions.map(item => item.candidate).sort()).toEqual(['Zustand', '硫方怪'])
+  })
+
+  it('ignores ordinary English text', () => {
+    const match = createPhoneticMatcher([zustand, memoize], [mandarin, english])
+
+    expect(match('I use React with a reducer and a context provider.')).toEqual([])
+  })
+})
+
 describe('importVocabularyPack', () => {
   it('derives pronunciations from Chinese written forms', () => {
     const entries = importVocabularyPack({
@@ -79,6 +122,15 @@ describe('importVocabularyPack', () => {
     }, { vocabulary: kwsVocabulary, pronounce: pronounceChinese })
 
     expect(entries).toEqual([sulfurCube])
+  })
+
+  it('derives pronunciations from English written forms in the dictionary', () => {
+    const entries = importVocabularyPack({
+      source: 'minecraft-wiki',
+      entries: [{ term: 'Sulfur Cube', writtenForms: ['Sulfur Cube'], description: sulfurCube.description }],
+    }, { vocabulary: kwsVocabulary, pronounce: pronounceEnglish })
+
+    expect(entries[0].pronunciations).toEqual([['S', 'AH1', 'L', 'F', 'ER0', 'K', 'Y', 'UW1', 'B']])
   })
 
   it('drops an entry that has no pronunciation and no Chinese written form', () => {

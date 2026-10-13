@@ -55,9 +55,14 @@ function syllableRuns(text: string): PhoneticUnit[][] {
  */
 export const mandarin: PhoneticLanguage = {
   units: syllableRuns,
-  countUnits: tokens => tokens.some(token => token !== token.toLowerCase())
-    ? 0
-    : tokens.filter(token => /[aeiou]/.test(toneless(token))).length,
+  windows: (tokens) => {
+    if (tokens.some(token => token !== token.toLowerCase()))
+      return undefined
+    // A window covers one syllable less to one syllable more than the pronunciation. A single syllable sounds like
+    // too many words, so it never matches.
+    const syllables = tokens.filter(token => /[aeiou]/.test(toneless(token))).length
+    return syllables >= 2 ? { min: syllables - 1, max: syllables + 1 } : undefined
+  },
   substitutionCost: (a, b) => {
     if (a === b)
       return 0

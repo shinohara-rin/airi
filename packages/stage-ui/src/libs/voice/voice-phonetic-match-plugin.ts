@@ -17,10 +17,19 @@ export interface PhoneticSuggestions {
 
 const NOTE = 'Speech recognition can mishear these spans. Each candidate sounds similar. The transcript is unchanged. Use a candidate only when the conversation supports it.'
 
-/** Loads the shared matcher with each language adapter. Each adapter brings its own dictionary, so they load lazily. */
+/**
+ * Loads the shared matcher with each language adapter. Each adapter brings its own dictionary, so they load lazily.
+ * The English dictionary is several megabytes, so it loads only when an entry has an ARPAbet pronunciation.
+ * ARPAbet phones are upper case, and pinyin tokens are lower case.
+ */
 async function loadMatcher(entries: readonly PhoneticVocabularyEntry[]) {
-  const [{ createPhoneticMatcher }, { mandarin }] = await Promise.all([import('./phonetic-match'), import('./phonetic-mandarin')])
-  return createPhoneticMatcher(entries, [mandarin])
+  const needsEnglish = entries.some(entry => entry.pronunciations.some(tokens => tokens.some(token => token !== token.toLowerCase())))
+  const [{ createPhoneticMatcher }, { mandarin }, english] = await Promise.all([
+    import('./phonetic-match'),
+    import('./phonetic-mandarin'),
+    needsEnglish ? import('./phonetic-english').then(module => module.english) : undefined,
+  ])
+  return createPhoneticMatcher(entries, english ? [mandarin, english] : [mandarin])
 }
 
 export interface VoicePhoneticMatchOptions {
@@ -44,7 +53,7 @@ export interface VoicePhoneticMatchOptions {
  * Interim text is not matched, because the provider can still revise it.
  *
  * The matcher and its pinyin dictionary load on the first input with a vocabulary, so hosts without one do not load it.
- * v1 matches Mandarin only. Another language joins as a {@link PhoneticLanguage} adapter in {@link loadMatcher}.
+ * It matches Mandarin and English. Another language joins as a {@link PhoneticLanguage} adapter in {@link loadMatcher}.
  *
  * Use when:
  * - Install it on a controller. It needs no grant.

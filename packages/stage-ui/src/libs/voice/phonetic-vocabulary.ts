@@ -23,7 +23,7 @@ export type PhoneticVocabularyEntry = InferOutput<typeof phoneticVocabularyEntry
 
 /**
  * An importable vocabulary pack, for example terms exported from a game wiki.
- * An entry can omit `pronunciations`. Import then derives them from the Chinese written forms.
+ * An entry can omit `pronunciations`. Import then derives them from the written forms.
  */
 const vocabularyPackSchema = object({
   source: pipe(string(), trim(), minLength(1)),

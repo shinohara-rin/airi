@@ -3,6 +3,7 @@ import type { PhoneticVocabularyEntry } from '@proj-airi/stage-ui/libs/voice/pho
 
 import { errorMessageFrom } from '@moeru/std'
 import { kwsVocabulary } from '@proj-airi/stage-ui/libs/voice/kws-model'
+import { english, pronounceEnglish } from '@proj-airi/stage-ui/libs/voice/phonetic-english'
 import { mandarin, pronounceChinese } from '@proj-airi/stage-ui/libs/voice/phonetic-mandarin'
 import { createPhoneticMatcher } from '@proj-airi/stage-ui/libs/voice/phonetic-match'
 import { importVocabularyPack } from '@proj-airi/stage-ui/libs/voice/phonetic-vocabulary'
@@ -18,16 +19,18 @@ const samplePack = {
   entries: [
     { term: 'Sulfur Cube', writtenForms: ['硫方怪'], description: 'A cube-shaped Minecraft mob that lives near sulfur springs.' },
     { term: 'Creeper', writtenForms: ['苦力怕'], description: 'A green Minecraft mob that explodes near the player.' },
+    // The CMU dictionary has no "Enderman", so the entry gives its ARPAbet phones.
+    { term: 'Enderman', writtenForms: ['Enderman'], pronunciations: [['EH1', 'N', 'D', 'ER0', 'M', 'AE2', 'N']], description: 'A tall Minecraft mob that teleports and picks up blocks.' },
   ],
 }
 
-const transcript = ref('我刚才在温泉边遇到了一只流氓怪，后面还有个酷力爬')
+const transcript = ref('我刚才在温泉边遇到了一只流氓怪，后面还有个酷力爬. Then an end her man took a block.')
 const packText = ref(JSON.stringify(samplePack, null, 2))
 const threshold = ref(0.78)
 
 const pack = computed((): { entries: PhoneticVocabularyEntry[] } | { error: string } => {
   try {
-    return { entries: importVocabularyPack(JSON.parse(packText.value), { vocabulary: kwsVocabulary, pronounce: pronounceChinese }) }
+    return { entries: importVocabularyPack(JSON.parse(packText.value), { vocabulary: kwsVocabulary, pronounce: text => pronounceChinese(text) ?? pronounceEnglish(text) }) }
   }
   catch (error) {
     return { error: errorMessageFrom(error) ?? t('tamagotchi.settings.devtools.pages.phonetic-match.pack.invalid') }
@@ -35,10 +38,11 @@ const pack = computed((): { entries: PhoneticVocabularyEntry[] } | { error: stri
 })
 
 const entries = computed(() => 'entries' in pack.value ? pack.value.entries : [])
-const tokens = computed(() => mandarin.units(transcript.value).map(run => run.map(unit => unit.tokens.join(' ')).join(' · ')))
-const suggestions = computed(() => createPhoneticMatcher(entries.value, [mandarin], { threshold: threshold.value })(transcript.value))
+const languages = [mandarin, english]
+const tokens = computed(() => languages.flatMap(language => language.units(transcript.value)).map(run => run.map(unit => unit.tokens.join(' ')).join(' · ')))
+const suggestions = computed(() => createPhoneticMatcher(entries.value, languages, { threshold: threshold.value })(transcript.value))
 // A near-zero threshold keeps the best reading of each phrase, so a near miss shows how far it is from the threshold.
-const nearest = computed(() => createPhoneticMatcher(entries.value, [mandarin], { threshold: 0.01, limit: 10 })(transcript.value))
+const nearest = computed(() => createPhoneticMatcher(entries.value, languages, { threshold: 0.01, limit: 10 })(transcript.value))
 </script>
 
 <template>
