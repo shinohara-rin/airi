@@ -10,7 +10,7 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const hearingStore = useHearingStore()
-const { configured, autoSendEnabled, autoSendDelay, endJudgeEnabled, rephraseEnabled, rephraseProvider, rephraseModel } = storeToRefs(hearingStore)
+const { configured, autoSendEnabled, autoSendDelay, endJudgeEnabled, rephraseEnabled, rephraseProvider, rephraseModel, phoneticRerankEnabled } = storeToRefs(hearingStore)
 const wakeWords = useWakeWordsStore()
 
 const providersStore = useProviderStore()
@@ -156,6 +156,22 @@ const pages = computed(() => [
               :placeholder="t('settings.pages.modules.hearing.sections.section.rephrase.model-placeholder')"
             />
           </template>
+        </div>
+
+        <div :class="['border-t border-neutral-200 pt-4 dark:border-neutral-700', 'flex flex-col gap-4']">
+          <div>
+            <h3 :class="['text-base text-neutral-500 md:text-xl dark:text-neutral-500']">
+              {{ t('settings.pages.modules.hearing.sections.section.phonetic-rerank.title') }}
+            </h3>
+            <div :class="['text-neutral-400 dark:text-neutral-400']">
+              {{ t('settings.pages.modules.hearing.sections.section.phonetic-rerank.description') }}
+            </div>
+          </div>
+          <FieldCheckbox
+            v-model="phoneticRerankEnabled"
+            :label="t('settings.pages.modules.hearing.sections.section.phonetic-rerank.enabled')"
+            :description="t('settings.pages.modules.hearing.sections.section.phonetic-rerank.enabled-description')"
+          />
         </div>
       </SettingsCard>
     </div>
