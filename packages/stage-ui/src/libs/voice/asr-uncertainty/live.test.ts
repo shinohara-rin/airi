@@ -24,9 +24,9 @@ describe('audioHistory', () => {
     history.append(Float32Array.from([0, 1, 2, 3, 4]))
     history.append(Float32Array.from([5, 6, 7, 8, 9]))
 
-    expect(history.slice(0.3, 0.7)).toEqual([3, 4, 5, 6])
+    expect(history.slice(0.3, 0.7)).toEqual(Float32Array.from([3, 4, 5, 6]))
     history.dropBefore(0.6)
-    expect(history.slice(0.3, 0.7)).toEqual([5, 6])
+    expect(history.slice(0.3, 0.7)).toEqual(Float32Array.from([5, 6]))
   })
 })
 
