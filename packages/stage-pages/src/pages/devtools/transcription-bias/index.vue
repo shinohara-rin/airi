@@ -4,18 +4,20 @@ import type { ConversationMessage, ConversationTerm } from '@proj-airi/stage-ui/
 import { SHERPAW_TRANSCRIPTION_PROVIDER_ID, sherpawModels } from '@proj-airi/provider-inference'
 import { conversationMessagesOf, rankConversationTerms, TranscriptionBiasList } from '@proj-airi/stage-ui/libs/voice/transcription-bias'
 import { describeBiasDelivery } from '@proj-airi/stage-ui/libs/voice/transcription-bias-delivery'
+import { useAuthStore } from '@proj-airi/stage-ui/stores/auth'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
 import { useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
 import { useProviderConfigStore } from '@proj-airi/stage-ui/stores/providers/config'
 import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
 import { Button, FieldInputFile, FieldSelect, FieldTextArea } from '@proj-airi/ui'
 import { useObjectUrl } from '@vueuse/core'
-import { computed, onMounted, shallowRef, watch } from 'vue'
+import { storeToRefs } from 'pinia'
+import { computed, shallowRef, watch } from 'vue'
 
 import { useBiasComparison, useClipRecorder } from './composables/use-bias-comparison'
 
 const sourceOptions = [
-  { value: 'session', label: 'Active chat session' },
+  { value: 'session', label: 'Saved chat' },
   { value: 'text', label: 'Pasted conversation' },
 ]
 const formLabels: Record<ConversationTerm['form'] | 'extra', string> = {
@@ -26,6 +28,8 @@ const formLabels: Record<ConversationTerm['form'] | 'extra', string> = {
 }
 
 const sessions = useChatSessionStore()
+const { sessionMetas, activeSessionId } = storeToRefs(sessions)
+const { userId } = storeToRefs(useAuthStore())
 const hearing = useHearingStore()
 const providers = useProviderStore()
 const providerConfigs = useProviderConfigStore()
@@ -36,17 +40,37 @@ const extra = shallowRef('')
 const sessionMessages = shallowRef<readonly ConversationMessage[]>([])
 const sessionError = shallowRef<string>()
 
-async function loadActiveSession() {
+/** The signed-in user's chats, newest first, as the sessions drawer lists them. */
+const sessionOptions = computed(() => {
+  const owner = userId.value || 'local'
+  return Object.values(sessionMetas.value)
+    .filter(meta => meta.userId === owner)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .map(meta => ({
+      value: meta.sessionId,
+      label: `${meta.title || 'Untitled chat'} (${new Date(meta.updatedAt).toLocaleString()})${meta.sessionId === activeSessionId.value ? ' - active' : ''}`,
+    }))
+})
+const selectedSessionId = shallowRef('')
+watch(activeSessionId, (sessionId) => {
+  if (!selectedSessionId.value)
+    selectedSessionId.value = sessionId
+}, { immediate: true })
+
+async function loadSelectedSession() {
   sessionError.value = undefined
-  const sessionId = sessions.activeSessionId
+  const sessionId = selectedSessionId.value
   if (!sessionId) {
-    sessionError.value = 'No chat session is active.'
+    sessionError.value = 'No chat is selected.'
     sessionMessages.value = []
     return
   }
   await sessions.loadSession(sessionId)
-  sessionMessages.value = conversationMessagesOf(sessions.getSessionMessagesIfLoaded(sessionId) ?? [])
+  // The selection can change while the session loads. Only the latest selection writes the messages.
+  if (sessionId === selectedSessionId.value)
+    sessionMessages.value = conversationMessagesOf(sessions.getSessionMessagesIfLoaded(sessionId) ?? [])
 }
+watch(selectedSessionId, () => void loadSelectedSession(), { immediate: true })
 
 /** Lines start with `user:` or `assistant:`. A line without a role continues the previous message. */
 function parseConversation(text: string): ConversationMessage[] {
@@ -130,8 +154,6 @@ const gained = computed(() => {
   const before = new Set(foundPhrases(plain.text))
   return foundPhrases(biased.text).filter(phrase => !before.has(phrase))
 })
-
-onMounted(() => void loadActiveSession())
 </script>
 
 <template>
@@ -146,8 +168,9 @@ onMounted(() => void loadActiveSession())
         Conversation
       </h2>
       <FieldSelect v-model="source" label="Source" :options="sourceOptions" />
+      <FieldSelect v-if="source === 'session'" v-model="selectedSessionId" label="Chat" :options="sessionOptions" placeholder="Select a chat" />
       <div v-if="source === 'session'" :class="['flex flex-wrap items-center gap-4']">
-        <Button icon="i-solar:refresh-bold" label="Reload the session" @click="loadActiveSession" />
+        <Button icon="i-solar:refresh-bold" label="Reload the chat" @click="loadSelectedSession" />
         <span :class="['text-sm text-neutral-500']">{{ sessionMessages.length }} messages</span>
         <span v-if="sessionError" :class="['text-sm text-red-500']">{{ sessionError }}</span>
       </div>
