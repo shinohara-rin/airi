@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This repository needs no per-thread authentication or service repair by default.
+# Dependencies and browser binaries remain in the snapshot. Do not reinstall them here.
+echo '[resume] AIRI uses the cached toolchain and dependencies.'

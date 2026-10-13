@@ -21,6 +21,7 @@ lerna-debug.log*
 # AI Agents
 .claude/worktrees/
 .superpowers/
+.amp/portals/*
 
 # Anything .local, especially for .env.local
 *.local

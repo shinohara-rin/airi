@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd -- "$repo_root"
+
+TIMEFORMAT='[setup] Step completed in %3R seconds'
+trap 'printf "[setup] Failed at line %s\n" "$LINENO" >&2' ERR
+
+echo '[setup] Checking native build, Electron, and Chromium prerequisites'
+packages=(
+  ca-certificates curl xz-utils build-essential python3 pkg-config
+  libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+  libx11-dev libxtst-dev libxrandr-dev libxinerama-dev libxkbcommon-dev
+  libx11-xcb1 libxss1 libgtk-3-0 libnotify4 libnss3 libgbm1 libasound2
+  libicu72 libssl3 zlib1g xvfb xauth fonts-liberation
+)
+missing=()
+for package in "${packages[@]}"; do
+  if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)" != 'install ok installed' ]]; then
+    missing+=("$package")
+  fi
+done
+if ((${#missing[@]})); then
+  time sudo apt-get update -qq
+  time sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+fi
+
+export PATH="$HOME/.local/bin:$PATH"
+if ! command -v mise >/dev/null 2>&1; then
+  echo '[setup] Installing mise'
+  time curl -fsSL https://mise.run | sh
+fi
+
+echo '[setup] Installing the tool versions from .tool-versions'
+time mise install --yes
+eval "$(mise env --shell bash)"
+node --version
+pnpm --version
+dotnet --version
+[[ "pnpm@$(pnpm --version)" == "$(node -p 'require("./package.json").packageManager')" ]]
+
+# Login shells and supervised services need the same tools as setup.
+profile_marker="# AIRI orb toolchain: $repo_root"
+if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+  cat >> "$HOME/.bash_profile" <<EOF
+
+$profile_marker
+case "\$PWD/" in
+  "$repo_root/"*)
+    if [[ "\${AIRI_ORB_ENV:-}" != "$repo_root" ]]; then
+      AIRI_ORB_ENV="$repo_root"
+      export PATH="$HOME/.local/bin:\$PATH"
+      eval "\$("$(command -v mise)" -C "$repo_root" env --shell bash)"
+    fi
+    ;;
+esac
+EOF
+fi
+
+# The normal install also builds shared packages and prepares workspace assets.
+# Serial builds keep the default Turbo concurrency from exhausting small orbs.
+echo '[setup] Installing locked workspace dependencies and building packages'
+time TURBO_CONCURRENCY=1 pnpm install --frozen-lockfile
+
+# pnpm can skip postinstall when only source files change in a stale snapshot.
+echo '[setup] Refreshing shared package outputs through the Turbo cache'
+time pnpm run build:packages --concurrency=1
+
+echo '[setup] Caching Chromium for the repository browser tests'
+time pnpm exec playwright install chromium
+
+echo '[setup] Caching the Electron runtime'
+time pnpm -F @proj-airi/stage-tamagotchi exec install-electron
+
+echo '[setup] Ready. Backend services and native release SDKs are task-specific.'
