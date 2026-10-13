@@ -128,6 +128,21 @@ describe('createPhoneticMatcher with English', () => {
     expect(match('speech recognition is hard')).toEqual([])
   })
 
+  it('does not suggest a term that the transcript spells in another letter case', () => {
+    const match = createSuggester([{ ...zustand, writtenForms: ['Zustand'] }], [english])
+
+    expect(match('we moved to zustand last week')).toEqual([])
+  })
+
+  it('keeps candidates for other spans when one span has many readings', () => {
+    const readings = Array.from({ length: 25 }, (_, index) => ({ ...zustand, term: `Zustand ${index}`, writtenForms: [`Zustand${index}`] }))
+    const match = createPhoneticMatcher([...readings, memoize], [english])
+
+    const candidates = match('zoo stand and memo eyes')
+
+    expect(candidates.some(item => item.candidate === 'memoize')).toBe(true)
+  })
+
   it('ignores ordinary English text', () => {
     const match = createSuggester([zustand, memoize], [mandarin, english])
 

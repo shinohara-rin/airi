@@ -114,7 +114,8 @@ export function createPhoneticMatcher(entries: readonly PhoneticVocabularyEntry[
     language,
     targets: entries.flatMap(entry => entry.pronunciations.flatMap((tokens) => {
       const windows = language.windows(tokens)
-      return windows ? [{ entry, tokens, windows }] : []
+      // Recognizers often change letter case, for example `sulfur cube` for `Sulfur Cube`, so the written check ignores it.
+      return windows ? [{ entry, tokens, windows, forms: entry.writtenForms.map(form => form.toLowerCase()) }] : []
     })),
   })).filter(plan => plan.targets.length)
 
@@ -129,7 +130,8 @@ export function createPhoneticMatcher(entries: readonly PhoneticVocabularyEntry[
               const start = window[0].start
               const end = window.at(-1)!.end
               const span = text.slice(start, end)
-              if (target.entry.writtenForms.some(form => span.includes(form)))
+              const folded = span.toLowerCase()
+              if (target.forms.some(form => folded.includes(form)))
                 continue
               const score = similarity(window.flatMap(unit => unit.tokens), target.tokens, language)
               if (score < (window.some(unit => unit.guessed) ? guessedThreshold : threshold))
@@ -142,8 +144,30 @@ export function createPhoneticMatcher(entries: readonly PhoneticVocabularyEntry[
       }
     }
 
-    return found.sort((a, b) => b.score - a.score).slice(0, limit)
+    return budgetCandidates(found.sort((a, b) => b.score - a.score), limit)
   }
+}
+
+/** The most readings of one stretch of the transcript, so one strong cluster cannot fill the candidate list. */
+const READINGS_PER_SPAN = 4
+
+/**
+ * Keeps the strongest candidates up to `limit`, in score order.
+ *
+ * A term keeps only its best window in one stretch of the transcript, because its other windows are the same reading.
+ * A stretch keeps at most {@link READINGS_PER_SPAN} different terms, so the other stretches still reach the limit.
+ */
+function budgetCandidates(sorted: readonly PhoneticCandidate[], limit: number) {
+  const kept: PhoneticCandidate[] = []
+  for (const candidate of sorted) {
+    if (kept.length >= limit)
+      break
+    const overlapping = kept.filter(other => candidate.start < other.end && other.start < candidate.end)
+    if (overlapping.length >= READINGS_PER_SPAN || overlapping.some(other => other.term === candidate.term))
+      continue
+    kept.push(candidate)
+  }
+  return kept
 }
 
 /**

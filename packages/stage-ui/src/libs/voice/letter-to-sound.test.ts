@@ -9,6 +9,11 @@ describe('guessPhones', () => {
     expect(guessPhones('creeper')).toEqual(['K', 'R', 'IY1', 'P', 'ER0'])
   })
 
+  it('reads every letter, including a q without u', () => {
+    expect(guessPhones('qwen')).toEqual(['K', 'W', 'EH1', 'N'])
+    expect(guessPhones('abcdefghijklmnopqrstuvwxyz').length).toBeGreaterThan(0)
+  })
+
   it('reads a doubled consonant once', () => {
     expect(guessPhones('zustandd')).toEqual(guessPhones('zustand'))
   })

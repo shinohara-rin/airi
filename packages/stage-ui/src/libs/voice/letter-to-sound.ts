@@ -18,6 +18,7 @@ const rules: readonly (readonly [RegExp, readonly string[] | null])[] = [
   [/ck/y, ['K']],
   [/ng/y, ['NG']],
   [/qu/y, ['K', 'W']],
+  [/q/y, ['K']],
   [/gh/y, []],
   [/^kn/y, ['N']],
   [/e[ea]/y, ['IY']],
