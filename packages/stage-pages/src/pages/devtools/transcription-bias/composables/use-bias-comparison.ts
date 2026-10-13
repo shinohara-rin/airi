@@ -33,7 +33,7 @@ async function transcribeClip(transcriber: StreamingTranscriber, clip: Blob, bia
  * Transcribes one clip with the active Hearing provider twice: once without bias, then once with the given phrases.
  *
  * The runs go one after the other, because a local model allocates its memory for each request.
- * Each run uses a new transcriber with the current Hearing settings. A new comparison or the page unmount aborts the run in flight.
+ * Both runs use one transcriber, made from the Hearing settings when the comparison starts. A new comparison or the page unmount aborts the run in flight.
  */
 export function useBiasComparison() {
   const hearing = useHearingStore()
@@ -53,11 +53,20 @@ export function useBiasComparison() {
     ]
     runs.value = planned
     try {
+      let transcriber: StreamingTranscriber
+      try {
+        transcriber = hearing.createTranscriber()
+      }
+      catch (cause) {
+        const error = errorMessageFrom(cause) ?? 'The Hearing provider is not ready'
+        runs.value = planned.map(run => ({ ...run, error }))
+        return
+      }
       for (const [index, run] of planned.entries()) {
         const startedAt = performance.now()
         let result: ComparisonRun
         try {
-          const text = await transcribeClip(hearing.createTranscriber(), clip, run.bias, controller.signal)
+          const text = await transcribeClip(transcriber, clip, run.bias, controller.signal)
           result = { ...run, text, milliseconds: performance.now() - startedAt }
         }
         catch (cause) {

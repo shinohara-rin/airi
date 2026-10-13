@@ -52,9 +52,10 @@ const sessionOptions = computed(() => {
     }))
 })
 const selectedSessionId = shallowRef('')
-watch(activeSessionId, (sessionId) => {
-  if (!selectedSessionId.value)
-    selectedSessionId.value = sessionId
+// The selection falls back to the active chat when it is empty or leaves the list, for example after an account switch.
+watch([activeSessionId, sessionOptions], ([sessionId, options]) => {
+  if (!options.some(option => option.value === selectedSessionId.value))
+    selectedSessionId.value = options.some(option => option.value === sessionId) ? sessionId : ''
 }, { immediate: true })
 
 async function loadSelectedSession() {
@@ -65,10 +66,21 @@ async function loadSelectedSession() {
     sessionMessages.value = []
     return
   }
-  await sessions.loadSession(sessionId)
+  let loaded: boolean
+  try {
+    loaded = await sessions.loadSession(sessionId)
+  }
+  catch (cause) {
+    loaded = false
+    console.warn('[transcription-bias] Chat load failed', cause)
+  }
   // The selection can change while the session loads. Only the latest selection writes the messages.
-  if (sessionId === selectedSessionId.value)
-    sessionMessages.value = conversationMessagesOf(sessions.getSessionMessagesIfLoaded(sessionId) ?? [])
+  if (sessionId !== selectedSessionId.value)
+    return
+  const stored = loaded ? sessions.getSessionMessagesIfLoaded(sessionId) : undefined
+  if (!stored)
+    sessionError.value = 'The chat did not load.'
+  sessionMessages.value = conversationMessagesOf(stored ?? [])
 }
 watch(selectedSessionId, () => void loadSelectedSession(), { immediate: true })
 

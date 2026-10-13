@@ -215,7 +215,8 @@ export class TranscriptionBiasList {
     const controller = new AbortController()
     this.pending.set(sessionId, controller)
 
-    const results = await Promise.allSettled(this.sources.map(source => source.collect(sessionId, controller.signal)))
+    // An async function turns a source that throws synchronously into a rejected result.
+    const results = await Promise.allSettled(this.sources.map(async source => source.collect(sessionId, controller.signal)))
     if (controller.signal.aborted)
       return
     this.pending.delete(sessionId)

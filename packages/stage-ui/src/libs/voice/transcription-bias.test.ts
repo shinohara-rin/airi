@@ -83,6 +83,18 @@ describe('transcriptionBiasList', () => {
     expect(onError).toHaveBeenCalledWith('memory', expect.any(Error))
   })
 
+  it('keeps the other sources when one throws synchronously', async () => {
+    const onError = vi.fn()
+    const list = new TranscriptionBiasList([
+      { name: 'memory', collect: () => { throw new Error('not ready') } },
+      { name: 'conversation', collect: async () => ['Pinia'] },
+    ], { onError })
+
+    await list.rebuild('alice')
+    expect(list.read('alice')).toEqual({ phrases: ['Pinia'] })
+    expect(onError).toHaveBeenCalledWith('memory', expect.any(Error))
+  })
+
   it('lets a newer rebuild win over a slower older one', async () => {
     const first = Promise.withResolvers<readonly string[]>()
     const collect = vi.fn()
