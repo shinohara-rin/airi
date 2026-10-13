@@ -40,16 +40,40 @@ export interface DecodeRequest {
   readonly blankPenalty: number
 }
 
-/** A segment that the live decoder closed, at an endpoint or at the end of the input. */
+/** One stream of a live decoder Worker. Every stream of a Worker gets the same input. */
+export interface LiveStreamSpec {
+  /**
+   * White noise added to the input, relative to the loudest recent input block. The seed makes the
+   * noise repeatable. Undefined decodes the input unchanged.
+   */
+  readonly noise?: { readonly snrDb: number, readonly seed: number }
+  /** The blank penalty of the stream's recognizer. See {@link DecodeRequest.blankPenalty}. */
+  readonly blankPenalty: number
+}
+
+export interface LiveListen {
+  readonly sampleRate: number
+  readonly streams: readonly LiveStreamSpec[]
+  /**
+   * When true, the first stream finds the endpoints, and each endpoint cuts every stream at the same
+   * input. When false, the caller cuts the streams with `decoderCut`.
+   */
+  readonly leads: boolean
+}
+
+/** The segments that one cut closed, at an endpoint or at the end of the input. */
 export interface LiveEndpoint {
-  /** Has no tokens when the model heard nothing. The audio can still hold speech that the model deleted. */
-  readonly segment: RawSegment
-  /** Seconds from the first accepted sample to the end of the segment. */
+  /**
+   * One segment per stream, in listen order, all over the same input. A segment has no tokens when its
+   * stream heard nothing. The audio can still hold speech that the model deleted.
+   */
+  readonly segments: readonly RawSegment[]
+  /** Seconds from the first accepted sample to the end of the segments. */
   readonly endTime: number
 }
 
 export interface LiveUpdate {
-  /** The open segment. Undefined when it has no tokens yet. */
+  /** The open segment of the first stream. Undefined when it has no tokens yet, or when the Worker does not lead. */
   readonly partial?: RawSegment
   readonly endpoints: readonly LiveEndpoint[]
 }
@@ -61,8 +85,10 @@ export interface LiveChunk {
 
 export const decoderLoad = defineInvokeEventa<void, DecoderModel>('voice:asr-uncertainty:decoder:load')
 export const decoderDecode = defineInvokeEventa<RawSegment[], DecodeRequest>('voice:asr-uncertainty:decoder:decode')
-/** Opens the live stream. A second call drops the open stream and starts a new one. */
-export const decoderListen = defineInvokeEventa<void, { sampleRate: number }>('voice:asr-uncertainty:decoder:listen')
+/** Opens the live streams. A second call drops the open streams and starts new ones. */
+export const decoderListen = defineInvokeEventa<void, LiveListen>('voice:asr-uncertainty:decoder:listen')
 export const decoderAccept = defineInvokeEventa<LiveUpdate, LiveChunk>('voice:asr-uncertainty:decoder:accept')
-/** Flushes and closes the live stream. The result holds the last segment. */
-export const decoderFinish = defineInvokeEventa<LiveUpdate, void>('voice:asr-uncertainty:decoder:finish')
+/** Closes the segment of every live stream at the input accepted so far, and starts the next ones. */
+export const decoderCut = defineInvokeEventa<LiveEndpoint, void>('voice:asr-uncertainty:decoder:cut')
+/** Flushes and closes the live streams. The result holds the last segment of each stream. */
+export const decoderFinish = defineInvokeEventa<LiveEndpoint, void>('voice:asr-uncertainty:decoder:finish')

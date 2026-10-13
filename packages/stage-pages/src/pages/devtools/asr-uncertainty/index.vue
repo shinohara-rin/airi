@@ -34,6 +34,9 @@ const sampleRate = 16000
 /** Clips longer than this make a run slow, because each decode takes about as long as the clip. */
 const longClipSeconds = 12
 
+/** Live lag above this is shown. Smaller lag comes from block delivery and decoding one block. */
+const lagWarningSeconds = 0.5
+
 const models = availableSherpawModels
 const modelOptions = models.map(model => ({
   value: model.id,
@@ -49,10 +52,11 @@ const run = reactive({
   snrMinDb: 8,
   snrMaxDb: 25,
   maxShiftMs: 40,
-  speedSpreadPercent: 4,
+  // Speed and pitch changes rarely change the transcript. Noise does.
+  speedSpreadPercent: 0,
   seed: 1,
   blankPenalty: 2,
-  // Two cores stay free for the page and the live decoder.
+  // Two cores stay free for the page and the audio input.
   workers: Math.min(4, Math.max(1, (navigator.hardwareConcurrency ?? 2) - 2)),
 })
 const analysisOptions = reactive<AnalysisOptions>({ ...defaultAnalysisOptions })
@@ -127,7 +131,7 @@ const progressPercent = computed(() => probe.progress.value.total === 0 ? 0 : 10
 const busy = computed(() => probe.status.value === 'loading' || probe.status.value === 'decoding')
 const listening = computed(() => live.status.value === 'loading' || live.status.value === 'listening')
 /** A new model or pool size replaces the Workers, which drops their pending decodes. */
-const decodersInUse = computed(() => busy.value || listening.value || live.utterances.value.some(utterance => utterance.status === 'decoding'))
+const decodersInUse = computed(() => busy.value || listening.value)
 
 function runSettings(): ProbeRunSettings | undefined {
   const model = models.find(candidate => candidate.id === modelId.value)
@@ -223,10 +227,9 @@ function agreementLabel(value: number | undefined) {
 function utteranceStatus(utterance: (typeof live.utterances.value)[number]) {
   if (utterance.status === 'error')
     return utterance.error ?? 'Failed'
-  if (utterance.status === 'decoding')
-    return `Decode ${utterance.progress.done} of ${utterance.progress.total}`
-  const decodes = utterance.result?.stoppedEarly ? `${utterance.result.samples.length} decodes agreed, stopped early` : `${utterance.result?.samples.length ?? 0} decodes`
-  return `${decodes}, ready ${utterance.latency?.toFixed(1) ?? '-'} s after the endpoint`
+  if (utterance.status === 'waiting')
+    return 'Waiting for the rollouts'
+  return `${utterance.result?.samples.length ?? 0} rollouts, ready ${utterance.latency?.toFixed(1) ?? '-'} s after the endpoint`
 }
 
 onBeforeUnmount(() => recording.value?.abort())
@@ -236,7 +239,7 @@ onBeforeUnmount(() => recording.value?.abort())
   <div :class="['flex flex-col gap-6 pb-12']">
     <Callout label="What this measures">
       <p>
-        The probe decodes the clip once as the reference, then many times with noise, a small time shift, and a small speed change.
+        The probe decodes the clip once as the reference, then many times with noise. A small time shift and a small speed change can be added, but they rarely change the transcript.
         Tokens that the copies do not reproduce at the same audio time are unstable. Speech that the copies hear but the reference drops is a deletion.
         Syllable nuclei with no token near them are untranscribed speech. An elongated sound adds no nucleus, so it does not count.
       </p>
@@ -291,13 +294,13 @@ onBeforeUnmount(() => recording.value?.abort())
         <FieldRange
           v-model="run.firstCount"
           label="Early stop after"
-          description="These decodes run first. The others run only when one of them differs from the reference. 0 runs all of them."
+          description="These decodes run first. The others run only when one of them differs from the reference. 0 runs all of them. Clip only."
           :min="0" :max="8" :step="1"
         />
         <FieldRange v-model="run.snrMinDb" label="Lowest SNR" :min="0" :max="40" :step="1" :format-value="value => `${value} dB`" />
         <FieldRange v-model="run.snrMaxDb" label="Highest SNR" :min="0" :max="40" :step="1" :format-value="value => `${value} dB`" />
-        <FieldRange v-model="run.maxShiftMs" label="Largest time shift" description="Moves the chunk boundaries of streaming models." :min="0" :max="200" :step="5" :format-value="value => `${value} ms`" />
-        <FieldRange v-model="run.speedSpreadPercent" label="Speed spread" :min="0" :max="10" :step="0.5" :format-value="value => `±${value}%`" />
+        <FieldRange v-model="run.maxShiftMs" label="Largest time shift" description="Moves the chunk boundaries of streaming models. Clip only." :min="0" :max="200" :step="5" :format-value="value => `${value} ms`" />
+        <FieldRange v-model="run.speedSpreadPercent" label="Speed spread" description="Also changes the pitch. Clip only." :min="0" :max="10" :step="0.5" :format-value="value => `±${value}%`" />
         <FieldRange v-model="run.seed" label="Seed" description="The same seed repeats the same perturbations." :min="1" :max="100" :step="1" />
         <FieldRange
           v-model="run.blankPenalty"
@@ -307,7 +310,7 @@ onBeforeUnmount(() => recording.value?.abort())
         />
       </div>
       <div :class="['flex flex-wrap items-center gap-4']">
-        <Button variant="primary" color="primary" icon="i-solar:play-bold" label="Probe the clip" :disabled="!clip || busy || !modelId" @click="startProbe" />
+        <Button variant="primary" color="primary" icon="i-solar:play-bold" label="Probe the clip" :disabled="!clip || busy || listening || !modelId" @click="startProbe" />
         <Button v-if="busy" label="Stop" @click="probe.cancel()" />
         <span v-if="probe.status.value === 'loading'" :class="['text-sm']">Loading the model...</span>
         <span v-if="probe.status.value === 'decoding'" :class="['text-sm']">Decode {{ probe.progress.value.done }} of {{ probe.progress.value.total }}</span>
@@ -326,20 +329,24 @@ onBeforeUnmount(() => recording.value?.abort())
         Live
       </h2>
       <div :class="['text-xs text-neutral-500 dark:text-neutral-400']">
-        One Worker decodes the input as it arrives. After each endpoint, the segment goes to the probe with the run settings above.
-        A segment without words is probed only when it holds syllables as loud as earlier speech, because the model can delete a whole utterance.
+        The Workers decode the input as it arrives: one clean stream, one stream with its own noise per perturbed decode, and the blank penalty stream.
+        Each endpoint of the clean stream cuts every stream at the same input, so the probe is ready when the slowest Worker reaches the endpoint.
+        Live mode adds noise only. A segment without words is probed only when it holds syllables as loud as earlier speech, because the model can delete a whole utterance.
       </div>
       <FieldSelect v-model="liveSource" label="Input" :options="liveSourceOptions" :disabled="listening" />
       <div :class="['flex flex-wrap items-center gap-4']">
         <Button
           v-if="!listening"
           variant="primary" color="primary" icon="i-solar:soundwave-bold-duotone" label="Start"
-          :disabled="!modelId || recording !== undefined || (liveSource === 'clip' && !clip)"
+          :disabled="!modelId || busy || recording !== undefined || (liveSource === 'clip' && !clip)"
           @click="startLive"
         />
         <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="live.stop()" />
         <span v-if="live.status.value === 'loading'" :class="['text-sm']">Loading the model...</span>
         <span v-if="live.status.value === 'listening'" :class="['text-sm text-neutral-500']">Listening</span>
+        <span v-if="live.status.value === 'listening' && live.lag.value > lagWarningSeconds" :class="['text-sm text-amber-600 dark:text-amber-400']">
+          The Workers are {{ live.lag.value.toFixed(1) }} s behind the input. Use fewer perturbed decodes or more Workers.
+        </span>
       </div>
       <p v-if="live.error.value" :class="['text-sm text-red-500']">
         {{ live.error.value }}

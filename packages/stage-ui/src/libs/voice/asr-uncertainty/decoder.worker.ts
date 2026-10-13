@@ -1,6 +1,6 @@
 import type { ASRModule, OnlineRecognizer } from '@sherpaw/asr'
 
-import type { DecoderModel, LiveUpdate, RawSegment } from './events'
+import type { DecoderModel, LiveEndpoint, LiveUpdate, RawSegment } from './events'
 
 import { defineInvokeHandler } from '@moeru/eventa'
 import { createContext } from '@moeru/eventa/adapters/webworkers/worker'
@@ -8,7 +8,8 @@ import { createOnlineRecognizer, initASRModule, OnlineRecognizerTypes } from '@s
 import { loadData } from '@sherpaw/preloader'
 import { array, number, object, optional, parse, string } from 'valibot'
 
-import { decoderAccept, decoderDecode, decoderFinish, decoderListen, decoderLoad } from './events'
+import { decoderAccept, decoderCut, decoderDecode, decoderFinish, decoderListen, decoderLoad } from './events'
+import { InputLevel, NoiseStream } from './live-noise'
 
 /**
  * The subset of the sherpa-onnx result JSON that the probe reads.
@@ -33,6 +34,21 @@ const chunkSeconds = 0.1
 
 type Stream = ReturnType<OnlineRecognizer['createStream']>
 
+interface LiveStream {
+  readonly recognizer: OnlineRecognizer
+  readonly stream: Stream
+  readonly noise?: NoiseStream
+}
+
+interface LiveState {
+  readonly streams: LiveStream[]
+  readonly sampleRate: number
+  /** Input samples accepted so far, without the tail padding. */
+  received: number
+  readonly level: InputLevel
+  readonly leads: boolean
+}
+
 const { context } = createContext()
 
 /**
@@ -43,7 +59,7 @@ let state: {
   module: ASRModule
   model: DecoderModel
   recognizers: Map<number, OnlineRecognizer>
-  live?: { stream: Stream, sampleRate: number, received: number }
+  live?: LiveState
 } | undefined
 
 function loaded() {
@@ -105,9 +121,41 @@ function flush(recognizer: OnlineRecognizer, stream: Stream, sampleRate: number)
 }
 
 function closeLive() {
-  state?.live?.stream.free()
+  for (const live of state?.live?.streams ?? [])
+    live.stream.free()
   if (state)
     state.live = undefined
+}
+
+function listening(): LiveState {
+  const live = state?.live
+  if (!live)
+    throw new Error('Start listening before sending audio.')
+  return live
+}
+
+/** Gives every live stream the same block, with its own noise, and decodes what is ready. */
+function feedLive(live: LiveState, block: Float32Array) {
+  const level = live.level.update(block)
+  for (const { recognizer, stream, noise } of live.streams) {
+    stream.acceptWaveform(live.sampleRate, noise ? noise.apply(block, level) : block)
+    while (recognizer.isReady(stream))
+      recognizer.decode(stream)
+  }
+}
+
+/**
+ * Closes the segment of every live stream and starts the next ones.
+ * Only the first stream's endpoints count, so all segments cover the same input.
+ */
+function cutLive(live: LiveState): LiveEndpoint {
+  const segments = live.streams.map(({ recognizer, stream }) => {
+    // Reset starts the next segment, so the result must be read first.
+    const segment = readResult(recognizer, stream)
+    recognizer.reset(stream)
+    return segment
+  })
+  return { segments, endTime: live.received / live.sampleRate }
 }
 
 defineInvokeHandler(context, decoderLoad, async (model) => {
@@ -141,34 +189,43 @@ defineInvokeHandler(context, decoderDecode, ({ samples, sampleRate, blankPenalty
   }
 })
 
-defineInvokeHandler(context, decoderListen, ({ sampleRate }) => {
+defineInvokeHandler(context, decoderListen, ({ sampleRate, streams, leads }) => {
   const current = loaded()
-  const stream = recognizerFor(0).createStream()
   closeLive()
-  current.live = { stream, sampleRate, received: 0 }
+  const live: LiveState = { streams: [], sampleRate, received: 0, level: new InputLevel(sampleRate), leads }
+  current.live = live
+  for (const spec of streams) {
+    const recognizer = recognizerFor(spec.blankPenalty)
+    live.streams.push({ recognizer, stream: recognizer.createStream(), noise: spec.noise && new NoiseStream(spec.noise.snrDb, spec.noise.seed) })
+  }
 })
 
 defineInvokeHandler(context, decoderAccept, ({ samples }): LiveUpdate => {
-  const live = state?.live
-  if (!live)
-    throw new Error('Start listening before sending audio.')
-  const recognizer = recognizerFor(0)
+  const live = listening()
+  feedLive(live, samples)
   live.received += samples.length
-  const closed = feed(recognizer, live.stream, live.sampleRate, samples)
-  if (closed)
-    return { endpoints: [{ segment: closed, endTime: live.received / live.sampleRate }] }
-  const partial = readResult(recognizer, live.stream)
+  const first = live.streams[0]
+  if (!live.leads || !first)
+    return { endpoints: [] }
+  if (first.recognizer.isEndpoint(first.stream))
+    return { endpoints: [cutLive(live)] }
+  const partial = readResult(first.recognizer, first.stream)
   return { partial: hasContent(partial) ? partial : undefined, endpoints: [] }
 })
 
-defineInvokeHandler(context, decoderFinish, (): LiveUpdate => {
-  const live = state?.live
-  if (!live)
-    return { endpoints: [] }
+defineInvokeHandler(context, decoderCut, () => cutLive(listening()))
+
+defineInvokeHandler(context, decoderFinish, (): LiveEndpoint => {
+  const live = listening()
   try {
-    // The padding is not input, so every closed segment ends where the input ended.
-    const endTime = live.received / live.sampleRate
-    return { endpoints: flush(recognizerFor(0), live.stream, live.sampleRate).map(segment => ({ segment, endTime })) }
+    // The padding is not input, so it does not count in `received`, and the segments end where the input ended.
+    feedLive(live, new Float32Array(Math.round(live.sampleRate * tailPaddingSeconds)))
+    for (const { recognizer, stream } of live.streams) {
+      stream.inputFinished()
+      while (recognizer.isReady(stream))
+        recognizer.decode(stream)
+    }
+    return cutLive(live)
   }
   finally {
     closeLive()

@@ -1,10 +1,19 @@
-import type { LiveUpdate, ProbeResult, SpeechSelectionOptions } from '@proj-airi/stage-ui/libs/voice/asr-uncertainty'
+import type { LiveEndpoint, LiveUpdate, ProbeResult, SpeechSelectionOptions } from '@proj-airi/stage-ui/libs/voice/asr-uncertainty'
 
 import type { ProbeDecoders } from './use-probe-decoders'
 import type { ProbeRunSettings } from './use-uncertainty-probe'
 
 import { errorMessageFrom } from '@moeru/std'
-import { AudioHistory, fetchDecoderModel, LiveDecoder, normalizeToken, probeClip, selectSpeech } from '@proj-airi/stage-ui/libs/voice/asr-uncertainty'
+import {
+  AudioHistory,
+  fetchDecoderModel,
+  LiveDecoder,
+  normalizeToken,
+  planLiveStreams,
+  samplePerturbations,
+  selectSpeech,
+  streamedProbeResult,
+} from '@proj-airi/stage-ui/libs/voice/asr-uncertainty'
 import { onScopeDispose, ref, shallowRef } from 'vue'
 
 export interface LiveSettings extends ProbeRunSettings {
@@ -17,31 +26,36 @@ export interface LiveUtterance {
   /** Seconds from the start of the input to the start of the probed clip. */
   readonly start: number
   readonly end: number
-  /** What the live decoder heard. The probe decodes the clip again for its reference. */
+  /** What the clean stream heard. */
   readonly liveText: string
-  readonly status: 'decoding' | 'done' | 'error'
-  readonly progress: { done: number, total: number }
+  /** `waiting` lasts until every rollout has decoded the segment. */
+  readonly status: 'waiting' | 'done' | 'error'
   readonly result?: ProbeResult
   readonly error?: string
-  /** Seconds from the endpoint to the finished probe. */
+  /** Seconds from the arrival of the input at the endpoint to the finished probe. It includes the lag. */
   readonly latency?: number
 }
 
 /**
- * Decodes live input and probes each segment after its endpoint.
+ * Decodes live input clean and with noise at the same time, and probes each segment at its endpoint.
  *
- * One Worker decodes the input as it arrives and finds the endpoints. Each segment then goes to the
- * shared pool, so segments wait for each other there. A segment without tokens is probed only when it
- * has loud syllables, because it can hold speech that the model deleted.
+ * Every rollout is a stream that gets the input as it arrives, with its own noise. The clean stream
+ * leads in the first Worker. Its endpoints cut every stream at the same input, so a segment's probe is
+ * ready when the slowest Worker has decoded the segment. Live mode adds noise only. Time shift and
+ * speed need the whole clip, and the early stop needs the reference first.
+ *
+ * A segment without tokens is probed only when it has loud syllables, because it can hold speech that
+ * the model deleted.
  */
 export function useLiveProbe(decoders: ProbeDecoders) {
   const status = ref<'idle' | 'loading' | 'listening' | 'error'>('idle')
   const partial = ref('')
   const error = ref<string>()
   const utterances = shallowRef<readonly LiveUtterance[]>([])
+  /** Seconds of input that the slowest Worker has not decoded yet. It grows when the Workers are slower than real time. */
+  const lag = ref(0)
 
-  /** `input` ends the audio input. `probes` also drops the probes that have not finished. */
-  let session: { input: AbortController, probes: AbortController } | undefined
+  let session: AbortController | undefined
 
   function update(id: number, change: Partial<LiveUtterance>) {
     utterances.value = utterances.value.map(utterance => utterance.id === id ? { ...utterance, ...change } : utterance)
@@ -49,101 +63,155 @@ export function useLiveProbe(decoders: ProbeDecoders) {
 
   async function start(chunks: (signal: AbortSignal) => AsyncIterable<Float32Array>, settings: LiveSettings) {
     cancel()
-    const current = { input: new AbortController(), probes: new AbortController() }
+    const current = new AbortController()
     session = current
     status.value = 'loading'
     error.value = undefined
     partial.value = ''
     utterances.value = []
+    lag.value = 0
 
-    let decoder: LiveDecoder | undefined
+    // The clip pool holds its own copies of the model. Live mode does not use them.
+    decoders.release()
+    const perturbations = samplePerturbations(settings.count, { snrDb: settings.ranges.snrDb, shiftMs: [0, 0], speed: [1, 1] }, settings.seed)
+    const plan = planLiveStreams(perturbations, settings.blankPenalty, settings.workers)
+    const created: LiveDecoder[] = []
     try {
-      const [pool, created] = await Promise.all([
-        decoders.poolFor(settings.model, settings.workers),
-        fetchDecoderModel(settings.model).then(model => LiveDecoder.create(model, settings.sampleRate)),
-      ])
-      decoder = created
+      const model = await fetchDecoderModel(settings.model)
+      // Every start must settle, so a failed start leaves no Worker running.
+      const starts = await Promise.allSettled(plan.workers.map((streams, index) => LiveDecoder.create(model, { sampleRate: settings.sampleRate, streams, leads: index === 0 })))
+      for (const started of starts) {
+        if (started.status === 'fulfilled')
+          created.push(started.value)
+      }
+      const failed = starts.find(started => started.status === 'rejected')
+      if (failed)
+        throw failed.reason
       if (session !== current)
         return
+      const [leader, ...followers] = created
       status.value = 'listening'
 
       const history = new AudioHistory(settings.sampleRate)
       /** The loudest level of speech so far. It tells a deleted utterance from background noise. */
       let speechDb: number | undefined
       let nextId = 0
+      /** Input samples that each Worker has decoded. */
+      const decoded = created.map(() => 0)
+      /** When the input started, in `performance.now()` time. */
+      let inputStartedAt: number | undefined
+      /** The first failure of a follower. Its decodes are not awaited, so the loop checks this. */
+      let failure: unknown
+
+      const measureLag = () => {
+        if (inputStartedAt !== undefined && session === current)
+          lag.value = Math.max(0, (performance.now() - inputStartedAt) / 1000 - Math.min(...decoded) / settings.sampleRate)
+      }
+
+      /** Probes one cut. The leader's segments arrive at once, the followers' segments when they reach the cut. */
+      const handleCut = (endpoint: LiveEndpoint, following: Promise<LiveEndpoint[]>) => {
+        const reference = endpoint.segments[0]
+        const samples = history.slice(reference.startTime, endpoint.endTime)
+        // The next segment can start a little before this endpoint, because the decoder holds back
+        // its last frames. Two seconds of history covers that.
+        history.dropBefore(endpoint.endTime - 2)
+        const hasTokens = reference.tokens.some(token => normalizeToken(token) !== '')
+        const selection = selectSpeech(samples, settings.sampleRate, hasTokens, speechDb, settings.selection)
+        if (!selection) {
+          following.catch(() => {})
+          return
+        }
+        if (hasTokens)
+          speechDb = Math.max(speechDb ?? Number.NEGATIVE_INFINITY, selection.loudDb)
+
+        const id = nextId++
+        // The input at the endpoint arrived this long after the input started, if it came in real time.
+        const endpointAt = (inputStartedAt ?? performance.now()) + endpoint.endTime * 1000
+        const clipStart = reference.startTime + selection.offset
+        utterances.value = [...utterances.value, { id, start: clipStart, end: endpoint.endTime, liveText: reference.text, status: 'waiting' }]
+        const clip = samples.subarray(Math.round(selection.offset * settings.sampleRate))
+        following
+          .then((others) => {
+            if (session !== current)
+              return
+            const segments = [endpoint.segments, ...others.map(other => other.segments)]
+            const result = streamedProbeResult(clip, settings.sampleRate, clipStart, segments, plan, perturbations)
+            update(id, { status: 'done', result, latency: (performance.now() - endpointAt) / 1000 })
+          })
+          .catch((cause) => {
+            if (session === current)
+              update(id, { status: 'error', error: errorMessageFrom(cause) ?? 'The probe failed.' })
+          })
+      }
 
       const handle = ({ partial: open, endpoints }: LiveUpdate) => {
         partial.value = open?.text ?? ''
-        for (const { segment, endTime } of endpoints) {
-          const samples = history.slice(segment.startTime, endTime)
-          // The next segment can start a little before this endpoint, because the decoder holds back
-          // its last frames. Two seconds of history covers that.
-          history.dropBefore(endTime - 2)
-          const hasTokens = segment.tokens.some(token => normalizeToken(token) !== '')
-          const selection = selectSpeech(samples, settings.sampleRate, hasTokens, speechDb, settings.selection)
-          if (!selection)
-            continue
-          if (hasTokens)
-            speechDb = Math.max(speechDb ?? Number.NEGATIVE_INFINITY, selection.loudDb)
-
-          const id = nextId++
-          const endpointAt = performance.now()
-          utterances.value = [...utterances.value, {
-            id,
-            start: segment.startTime + selection.offset,
-            end: endTime,
-            liveText: segment.text,
-            status: 'decoding',
-            progress: { done: 0, total: 0 },
-          }]
-          const clip = samples.subarray(Math.round(selection.offset * settings.sampleRate))
-          probeClip(pool, clip, settings, {
-            signal: current.probes.signal,
-            onProgress: (done, total) => update(id, { progress: { done, total } }),
-          })
-            .then(result => update(id, { status: 'done', result, latency: (performance.now() - endpointAt) / 1000 }))
-            .catch((cause) => {
-              if (!current.probes.signal.aborted)
-                update(id, { status: 'error', error: errorMessageFrom(cause) ?? 'The probe failed.' })
-            })
+        for (const endpoint of endpoints) {
+          // Each follower cuts after the input that it got so far, which is the input of this endpoint.
+          // The cut must be sent before the next block.
+          handleCut(endpoint, Promise.all(followers.map(follower => follower.cut())))
         }
       }
 
-      for await (const samples of chunks(current.input.signal)) {
+      for await (const samples of chunks(current.signal)) {
+        if (failure)
+          throw failure
+        inputStartedAt ??= performance.now() - samples.length / settings.sampleRate * 1000
         history.append(samples)
-        handle(await created.accept(samples))
+        followers.forEach((follower, index) => {
+          follower.accept(samples).then(() => {
+            decoded[index + 1] += samples.length
+            measureLag()
+          }, (cause) => {
+            failure ??= cause
+          })
+        })
+        const leading = await leader.accept(samples)
+        decoded[0] += samples.length
+        measureLag()
         if (session !== current)
           return
+        handle(leading)
       }
-      handle(await created.finish())
-      if (session === current)
-        status.value = 'idle'
+      if (session !== current)
+        return
+      if (failure)
+        throw failure
+      const [last, ...others] = await Promise.all(created.map(decoder => decoder.finish()))
+      if (session !== current)
+        return
+      partial.value = ''
+      handleCut(last, Promise.resolve(others))
+      status.value = 'idle'
     }
     catch (cause) {
       if (session !== current)
         return
       error.value = errorMessageFrom(cause) ?? 'Live decoding failed.'
       status.value = 'error'
+      // The Workers stop below, so the segments that wait for rollouts never get them.
+      utterances.value = utterances.value.map(utterance => utterance.status === 'waiting' ? { ...utterance, status: 'error', error: 'Stopped before the rollouts' } : utterance)
     }
     finally {
-      decoder?.dispose()
+      // `finish` answers after every earlier cut, so no cut is still pending here unless the input failed.
+      for (const decoder of created)
+        decoder.dispose()
     }
   }
 
-  /** Ends the input. Segments that are already queued still finish. */
+  /** Ends the input. The segment that is still open gets its probe. */
   function stop() {
-    session?.input.abort()
+    session?.abort()
   }
 
-  /** Ends the input and drops the probes that have not finished. */
+  /** Ends the input and drops the segments that have no probe yet. */
   function cancel() {
-    session?.input.abort()
-    session?.probes.abort()
+    session?.abort()
     session = undefined
     status.value = 'idle'
   }
 
   onScopeDispose(cancel)
 
-  return { status, partial, error, utterances, start, stop, cancel }
+  return { status, partial, error, utterances, lag, start, stop, cancel }
 }

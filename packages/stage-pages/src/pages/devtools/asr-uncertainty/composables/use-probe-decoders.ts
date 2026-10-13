@@ -6,7 +6,7 @@ import { onScopeDispose } from 'vue'
 export type ProbeDecoders = ReturnType<typeof useProbeDecoders>
 
 /**
- * Keeps one decoder pool for the page, so clip and live runs share the same Workers.
+ * Keeps one decoder pool for the page, so clip runs share the same Workers.
  *
  * A pool stays alive while the model and the size stay the same. A change terminates the old Workers,
  * and their pending decodes never settle, so change them only between runs. A pool that fails to start
@@ -29,10 +29,13 @@ export function useProbeDecoders() {
     return current.pool
   }
 
-  onScopeDispose(() => {
+  /** Terminates the Workers to free their memory. The next `poolFor` starts a new pool. */
+  function release() {
     void current?.pool.then(pool => pool.dispose(), () => {})
     current = undefined
-  })
+  }
 
-  return { poolFor }
+  onScopeDispose(release)
+
+  return { poolFor, release }
 }

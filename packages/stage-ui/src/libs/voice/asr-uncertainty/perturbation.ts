@@ -30,7 +30,7 @@ export const cleanPerturbation: Perturbation = Object.freeze({ snrDb: Number.POS
  * Small deterministic PRNG. Results must repeat for the same seed, so a run can be compared after
  * a threshold change, and `Math.random` cannot be seeded.
  */
-function mulberry32(seed: number) {
+export function mulberry32(seed: number) {
   let state = seed >>> 0
   return () => {
     state = (state + 0x6D2B79F5) >>> 0
@@ -99,17 +99,20 @@ export function perturbAudio(samples: Float32Array, sampleRate: number, perturba
   if (!Number.isFinite(perturbation.snrDb))
     return output
 
-  const noiseRms = speechRms(samples, sampleRate) / 10 ** (perturbation.snrDb / 20)
-  const random = mulberry32(perturbation.seed)
+  addWhiteNoise(output, speechRms(samples, sampleRate) / 10 ** (perturbation.snrDb / 20), mulberry32(perturbation.seed))
+  return output
+}
+
+/** Adds Gaussian white noise with RMS amplitude `rms` to `output` in place. `random` gives uniform values in [0, 1). */
+export function addWhiteNoise(output: Float32Array, rms: number, random: () => number): void {
   for (let index = 0; index < output.length; index += 2) {
     // Box-Muller gives two independent Gaussian values for each pair of uniform values.
-    const radius = Math.sqrt(-2 * Math.log(1 - random())) * noiseRms
+    const radius = Math.sqrt(-2 * Math.log(1 - random())) * rms
     const angle = 2 * Math.PI * random()
     output[index] += radius * Math.cos(angle)
     if (index + 1 < output.length)
       output[index + 1] += radius * Math.sin(angle)
   }
-  return output
 }
 
 /**

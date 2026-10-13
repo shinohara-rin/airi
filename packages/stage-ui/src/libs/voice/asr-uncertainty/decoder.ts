@@ -1,12 +1,12 @@
 import type { SherpawModel } from '@proj-airi/provider-inference'
 
-import type { DecoderModel, LiveUpdate, RawSegment } from './events'
+import type { DecoderModel, LiveEndpoint, LiveListen, LiveUpdate, RawSegment } from './events'
 
 import { defineInvoke } from '@moeru/eventa'
 import { createContext } from '@moeru/eventa/adapters/webworkers'
 
 import { fetchSherpawModelPack } from '../../providers/providers/sherpaw/model-assets'
-import { decoderAccept, decoderDecode, decoderFinish, decoderListen, decoderLoad } from './events'
+import { decoderAccept, decoderCut, decoderDecode, decoderFinish, decoderListen, decoderLoad } from './events'
 
 type WorkerContext = ReturnType<typeof createContext>['context']
 
@@ -66,13 +66,17 @@ export class ClipDecoder {
 }
 
 /**
- * Decodes one live input with the normal decoder and reports each segment that an endpoint closes.
+ * Decodes one live input in one Worker, as one or more streams that each get the same input.
  *
- * Token times count from the first accepted sample, also after an endpoint. Calls run in order in one
- * Worker. A decode slower than real time makes `accept` fall behind the input.
+ * Each stream can add its own noise, so the streams are Monte Carlo rollouts that run while the
+ * input arrives. A leading decoder finds endpoints with its first stream and cuts all its streams
+ * there. A following decoder cuts only when `cut` is called. Calls run in order in the Worker, so a
+ * `cut` sent after an `accept` cuts after that input. Token times count from the first accepted
+ * sample, also after a cut. A decode slower than real time makes `accept` fall behind the input.
  */
 export class LiveDecoder {
   private readonly acceptInWorker
+  private readonly cutInWorker
   private readonly finishInWorker
 
   private constructor(
@@ -80,13 +84,14 @@ export class LiveDecoder {
     context: WorkerContext,
   ) {
     this.acceptInWorker = defineInvoke(context, decoderAccept)
+    this.cutInWorker = defineInvoke(context, decoderCut)
     this.finishInWorker = defineInvoke(context, decoderFinish)
   }
 
-  static async create(model: DecoderModel, sampleRate: number): Promise<LiveDecoder> {
+  static async create(model: DecoderModel, listen: LiveListen): Promise<LiveDecoder> {
     const { worker, context } = await startWorker(model)
     try {
-      await defineInvoke(context, decoderListen)({ sampleRate })
+      await defineInvoke(context, decoderListen)(listen)
       return new LiveDecoder(worker, context)
     }
     catch (error) {
@@ -101,8 +106,13 @@ export class LiveDecoder {
     return this.acceptInWorker({ samples: copy }, { transfer: [copy.buffer] })
   }
 
-  /** Ends the input. The result holds the last segment. */
-  finish(): Promise<LiveUpdate> {
+  /** Closes the segment of every stream at the input accepted so far. */
+  cut(): Promise<LiveEndpoint> {
+    return this.cutInWorker()
+  }
+
+  /** Ends the input. The result holds the last segment of every stream. */
+  finish(): Promise<LiveEndpoint> {
     return this.finishInWorker()
   }
 
