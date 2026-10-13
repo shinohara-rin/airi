@@ -1,6 +1,6 @@
 import type { ASRModule, OnlineRecognizer } from '@sherpaw/asr'
 
-import type { DecoderModel, RawSegment } from './events'
+import type { DecoderModel, LiveUpdate, RawSegment } from './events'
 
 import { defineInvokeHandler } from '@moeru/eventa'
 import { createContext } from '@moeru/eventa/adapters/webworkers/worker'
@@ -8,7 +8,7 @@ import { createOnlineRecognizer, initASRModule, OnlineRecognizerTypes } from '@s
 import { loadData } from '@sherpaw/preloader'
 import { array, number, object, optional, parse, string } from 'valibot'
 
-import { decoderDecode, decoderLoad } from './events'
+import { decoderAccept, decoderDecode, decoderFinish, decoderListen, decoderLoad } from './events'
 
 /**
  * The subset of the sherpa-onnx result JSON that the probe reads.
@@ -31,34 +31,44 @@ const tailPaddingSeconds = 0.6
 /** Feed size for one `acceptWaveform` call. The decoder result does not depend on it. */
 const chunkSeconds = 0.1
 
+type Stream = ReturnType<OnlineRecognizer['createStream']>
+
 const { context } = createContext()
 
 /**
  * Worker state. `load` replaces all of it. Recognizers read model files from the module file system,
  * so each recognizer stays valid until the next `load`.
  */
-let state: { module: ASRModule, model: DecoderModel, recognizers: Map<number, OnlineRecognizer> } | undefined
+let state: {
+  module: ASRModule
+  model: DecoderModel
+  recognizers: Map<number, OnlineRecognizer>
+  live?: { stream: Stream, sampleRate: number, received: number }
+} | undefined
 
-function recognizerFor(blankPenalty: number): OnlineRecognizer {
+function loaded() {
   if (!state)
     throw new Error('Load a model before decoding.')
+  return state
+}
+
+function recognizerFor(blankPenalty: number): OnlineRecognizer {
+  const current = loaded()
   // The blank penalty is a recognizer setting, so each value needs its own recognizer.
-  let recognizer = state.recognizers.get(blankPenalty)
+  let recognizer = current.recognizers.get(blankPenalty)
   if (!recognizer) {
-    recognizer = createOnlineRecognizer(state.module, {
-      type: state.model.recognizer === 'paraformer' ? OnlineRecognizerTypes.Paraformer : OnlineRecognizerTypes.Transducer,
-      modelConfig: { modelingUnit: state.model.modelingUnit },
+    recognizer = createOnlineRecognizer(current.module, {
+      type: current.model.recognizer === 'paraformer' ? OnlineRecognizerTypes.Paraformer : OnlineRecognizerTypes.Transducer,
+      modelConfig: { modelingUnit: current.model.modelingUnit },
       blankPenalty,
     })
-    state.recognizers.set(blankPenalty, recognizer)
+    current.recognizers.set(blankPenalty, recognizer)
   }
   return recognizer
 }
 
-function readResult(recognizer: OnlineRecognizer, stream: ReturnType<OnlineRecognizer['createStream']>): RawSegment | undefined {
+function readResult(recognizer: OnlineRecognizer, stream: Stream): RawSegment {
   const result = parse(resultSchema, recognizer.getResult(stream))
-  if (result.text === '' && result.tokens.length === 0)
-    return undefined
   return {
     text: result.text,
     tokens: result.tokens,
@@ -68,7 +78,40 @@ function readResult(recognizer: OnlineRecognizer, stream: ReturnType<OnlineRecog
   }
 }
 
+function hasContent(segment: RawSegment) {
+  return segment.text !== '' || segment.tokens.length > 0
+}
+
+/** Decodes one block. Returns the closed segment when the block reaches an endpoint, and starts the next one. */
+function feed(recognizer: OnlineRecognizer, stream: Stream, sampleRate: number, block: Float32Array): RawSegment | undefined {
+  stream.acceptWaveform(sampleRate, block)
+  while (recognizer.isReady(stream))
+    recognizer.decode(stream)
+  if (!recognizer.isEndpoint(stream))
+    return undefined
+  // Reset starts the next segment, so the result must be read first.
+  const segment = readResult(recognizer, stream)
+  recognizer.reset(stream)
+  return segment
+}
+
+/** Flushes the held-back frames and returns the segments that the flush closes, the last one included. */
+function flush(recognizer: OnlineRecognizer, stream: Stream, sampleRate: number): RawSegment[] {
+  const closed = feed(recognizer, stream, sampleRate, new Float32Array(Math.round(sampleRate * tailPaddingSeconds)))
+  stream.inputFinished()
+  while (recognizer.isReady(stream))
+    recognizer.decode(stream)
+  return [closed, readResult(recognizer, stream)].filter(segment => segment !== undefined)
+}
+
+function closeLive() {
+  state?.live?.stream.free()
+  if (state)
+    state.live = undefined
+}
+
 defineInvokeHandler(context, decoderLoad, async (model) => {
+  closeLive()
   for (const recognizer of state?.recognizers.values() ?? [])
     recognizer.free()
   // A fresh module per load keeps an earlier model's files out of the file system.
@@ -85,30 +128,49 @@ defineInvokeHandler(context, decoderDecode, ({ samples, sampleRate, blankPenalty
   const segments: RawSegment[] = []
   try {
     const chunk = Math.round(sampleRate * chunkSeconds)
-    const feed = (block: Float32Array) => {
-      stream.acceptWaveform(sampleRate, block)
-      while (recognizer.isReady(stream))
-        recognizer.decode(stream)
-      // An endpoint closes a segment. Reset starts the next one, so its result must be read first.
-      if (recognizer.isEndpoint(stream)) {
-        const segment = readResult(recognizer, stream)
-        if (segment)
-          segments.push(segment)
-        recognizer.reset(stream)
-      }
+    for (let start = 0; start < samples.length; start += chunk) {
+      const closed = feed(recognizer, stream, sampleRate, samples.subarray(start, start + chunk))
+      if (closed)
+        segments.push(closed)
     }
-    for (let start = 0; start < samples.length; start += chunk)
-      feed(samples.subarray(start, start + chunk))
-    feed(new Float32Array(Math.round(sampleRate * tailPaddingSeconds)))
-    stream.inputFinished()
-    while (recognizer.isReady(stream))
-      recognizer.decode(stream)
-    const last = readResult(recognizer, stream)
-    if (last)
-      segments.push(last)
-    return segments
+    segments.push(...flush(recognizer, stream, sampleRate))
+    return segments.filter(hasContent)
   }
   finally {
     stream.free()
+  }
+})
+
+defineInvokeHandler(context, decoderListen, ({ sampleRate }) => {
+  const current = loaded()
+  const stream = recognizerFor(0).createStream()
+  closeLive()
+  current.live = { stream, sampleRate, received: 0 }
+})
+
+defineInvokeHandler(context, decoderAccept, ({ samples }): LiveUpdate => {
+  const live = state?.live
+  if (!live)
+    throw new Error('Start listening before sending audio.')
+  const recognizer = recognizerFor(0)
+  live.received += samples.length
+  const closed = feed(recognizer, live.stream, live.sampleRate, samples)
+  if (closed)
+    return { endpoints: [{ segment: closed, endTime: live.received / live.sampleRate }] }
+  const partial = readResult(recognizer, live.stream)
+  return { partial: hasContent(partial) ? partial : undefined, endpoints: [] }
+})
+
+defineInvokeHandler(context, decoderFinish, (): LiveUpdate => {
+  const live = state?.live
+  if (!live)
+    return { endpoints: [] }
+  try {
+    // The padding is not input, so every closed segment ends where the input ended.
+    const endTime = live.received / live.sampleRate
+    return { endpoints: flush(recognizerFor(0), live.stream, live.sampleRate).map(segment => ({ segment, endTime })) }
+  }
+  finally {
+    closeLive()
   }
 })

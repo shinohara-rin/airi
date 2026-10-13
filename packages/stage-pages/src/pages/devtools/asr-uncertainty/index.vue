@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import type { AnalysisOptions, NucleusOptions, UncertainSpan, UntranscribedOptions } from '@proj-airi/stage-ui/libs/voice/asr-uncertainty'
+import type { AnalysisOptions, NucleusOptions, ProbeResult, UncertainSpan, UntranscribedOptions } from '@proj-airi/stage-ui/libs/voice/asr-uncertainty'
+
+import type { ProbeRunSettings } from './composables/use-uncertainty-probe'
 
 import { errorMessageFrom } from '@moeru/std'
-import { microphoneSource } from '@proj-airi/audio/browser'
 import { fileSource, Pcm16Encoder, toFloat32FromPCM16, toWav } from '@proj-airi/audio/encoding'
 import { xAsrBilingualZhEnInt8 } from '@proj-airi/provider-inference'
 import { availableSherpawModels } from '@proj-airi/stage-ui/libs/providers/providers/sherpaw/model-resources'
@@ -22,6 +23,9 @@ import { computed, onBeforeUnmount, reactive, ref, shallowRef, useTemplateRef, w
 
 import UncertaintyTimeline from './components/uncertainty-timeline.vue'
 
+import { microphoneChunks, replayChunks } from './composables/audio-chunks'
+import { useLiveProbe } from './composables/use-live-probe'
+import { useProbeDecoders } from './composables/use-probe-decoders'
 import { useUncertaintyProbe } from './composables/use-uncertainty-probe'
 
 /** Every Sherpaw model in AIRI runs at 16 kHz. Clips are converted to this rate once, when they load. */
@@ -41,12 +45,15 @@ const modelId = ref(models.find(model => model.id === xAsrBilingualZhEnInt8.id)?
 
 const run = reactive({
   count: 12,
+  firstCount: 3,
   snrMinDb: 8,
   snrMaxDb: 25,
   maxShiftMs: 40,
   speedSpreadPercent: 4,
   seed: 1,
   blankPenalty: 2,
+  // Two cores stay free for the page and the live decoder.
+  workers: Math.min(4, Math.max(1, (navigator.hardwareConcurrency ?? 2) - 2)),
 })
 const analysisOptions = reactive<AnalysisOptions>({ ...defaultAnalysisOptions })
 const nucleusOptions = reactive<NucleusOptions>({ ...defaultNucleusOptions })
@@ -55,36 +62,20 @@ const untranscribedOptions = reactive<UntranscribedOptions>({ ...defaultUntransc
 const clip = shallowRef<Float32Array<ArrayBuffer>>()
 const clipError = ref<string>()
 const files = ref<File[]>()
-const recording = shallowRef<{ stop: () => void }>()
+const recording = shallowRef<AbortController>()
 
 const clipSeconds = computed(() => (clip.value?.length ?? 0) / sampleRate)
 const clipBlob = computed(() => clip.value ? new Blob([toWav(clip.value.buffer, sampleRate)], { type: 'audio/wav' }) : undefined)
 const clipUrl = useObjectUrl(clipBlob)
-const player = useTemplateRef<HTMLAudioElement>('player')
 
-/**
- * Reads a PCM block stream to one mono clip at {@link sampleRate}.
- * `onReader` receives the encoder reader. Cancelling it ends the clip early, which stops a recording.
- */
-async function readClip(frames: ConstructorParameters<typeof Pcm16Encoder>[0], signal: AbortSignal, onReader?: (reader: ReadableStreamDefaultReader<Uint8Array>) => void) {
-  const reader = new Pcm16Encoder(frames, { sampleRate, signal }).stream.getReader()
-  onReader?.(reader)
-  const chunks: Uint8Array[] = []
-  let length = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done)
-      break
-    chunks.push(value)
-    length += value.byteLength
-  }
-  const bytes = new Uint8Array(length)
+function concat(parts: readonly Float32Array[]) {
+  const output = new Float32Array(parts.reduce((total, part) => total + part.length, 0))
   let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
+  for (const part of parts) {
+    output.set(part, offset)
+    offset += part.length
   }
-  return toFloat32FromPCM16(bytes)
+  return output
 }
 
 watch(files, async (selected) => {
@@ -95,46 +86,60 @@ watch(files, async (selected) => {
   try {
     // Nothing cancels a file read. The controller exists because both readers require a signal.
     const { signal } = new AbortController()
-    clip.value = await readClip(fileSource(file).open(signal), signal)
+    const reader = new Pcm16Encoder(fileSource(file).open(signal), { sampleRate, signal }).stream.getReader()
+    const parts: Float32Array[] = []
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done)
+        break
+      parts.push(toFloat32FromPCM16(value))
+    }
+    clip.value = concat(parts)
   }
   catch (error) {
     clipError.value = errorMessageFrom(error) ?? 'Could not read the file.'
   }
 })
 
-function startRecording() {
+async function startRecording() {
   clipError.value = undefined
   const controller = new AbortController()
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
-  // Cancelling the encoder reader ends the read loop normally and closes the microphone connection.
-  recording.value = { stop: () => void reader?.cancel() }
-  readClip(microphoneSource({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }).open(controller.signal), controller.signal, (created) => {
-    reader = created
-  })
-    .then((samples) => {
-      clip.value = samples
-    })
-    .catch((error) => {
-      clipError.value = errorMessageFrom(error) ?? 'Could not record from the microphone.'
-    })
-    .finally(() => {
-      recording.value = undefined
-    })
+  recording.value = controller
+  try {
+    const parts: Float32Array[] = []
+    for await (const part of microphoneChunks(sampleRate, controller.signal))
+      parts.push(part)
+    clip.value = concat(parts)
+  }
+  catch (error) {
+    clipError.value = errorMessageFrom(error) ?? 'Could not record from the microphone.'
+  }
+  finally {
+    recording.value = undefined
+  }
 }
 
-const probe = useUncertaintyProbe()
+const decoders = useProbeDecoders()
+const probe = useUncertaintyProbe(decoders)
+const live = useLiveProbe(decoders)
+
 const progressPercent = computed(() => probe.progress.value.total === 0 ? 0 : 100 * probe.progress.value.done / probe.progress.value.total)
 const busy = computed(() => probe.status.value === 'loading' || probe.status.value === 'decoding')
+const listening = computed(() => live.status.value === 'loading' || live.status.value === 'listening')
+/** A new model or pool size replaces the Workers, which drops their pending decodes. */
+const decodersInUse = computed(() => busy.value || listening.value || live.utterances.value.some(utterance => utterance.status === 'decoding'))
 
-function startProbe() {
+function runSettings(): ProbeRunSettings | undefined {
   const model = models.find(candidate => candidate.id === modelId.value)
-  if (!clip.value || !model)
-    return
+  if (!model)
+    return undefined
   const speedSpread = run.speedSpreadPercent / 100
-  void probe.run(clip.value, {
+  return {
     model,
+    workers: run.workers,
     sampleRate,
     count: run.count,
+    firstCount: run.firstCount,
     ranges: {
       snrDb: [Math.min(run.snrMinDb, run.snrMaxDb), Math.max(run.snrMinDb, run.snrMaxDb)],
       shiftMs: [0, run.maxShiftMs],
@@ -142,34 +147,65 @@ function startProbe() {
     },
     seed: run.seed,
     blankPenalty: model.recognizer === 'transducer' ? run.blankPenalty : 0,
+  }
+}
+
+/** The utterance whose result the Result section shows. Undefined shows the clip result. */
+const selectedUtteranceId = ref<number>()
+
+function startProbe() {
+  const settings = runSettings()
+  if (!clip.value || !settings)
+    return
+  selectedUtteranceId.value = undefined
+  void probe.run(clip.value, settings)
+}
+
+const liveSource = ref<'microphone' | 'clip'>('microphone')
+const liveSourceOptions = [
+  { value: 'microphone', label: 'Microphone', description: 'Without echo cancellation, noise suppression, or gain control.' },
+  { value: 'clip', label: 'Loaded clip', description: 'Plays the clip into the live decoder at real-time speed.' },
+]
+
+function startLive() {
+  const settings = runSettings()
+  const replayed = clip.value
+  if (!settings || (liveSource.value === 'clip' && !replayed))
+    return
+  selectedUtteranceId.value = undefined
+  const chunks = liveSource.value === 'clip' && replayed
+    ? (signal: AbortSignal) => replayChunks(replayed, sampleRate, signal)
+    : (signal: AbortSignal) => microphoneChunks(sampleRate, signal)
+  void live.start(chunks, {
+    ...settings,
+    selection: { nucleus: { ...nucleusOptions }, minNuclei: untranscribedOptions.minNuclei, marginSeconds: 0.3 },
   })
 }
 
 /** Analysis reruns on every threshold change. The decodes stay as they are. */
-const analysis = computed(() => {
-  const result = probe.result.value
-  if (!result)
-    return undefined
-  return analyzeHypotheses(result.reference, result.samples.map(sample => sample.hypothesis), result.durationSeconds, { ...analysisOptions })
-})
-
-/** Measured on the current clip. A new clip before a new run shows nuclei that do not match the result. */
-const contour = computed(() => clip.value ? measureIntensity(clip.value, sampleRate, { ...nucleusOptions }) : undefined)
-
-const spans = computed<UncertainSpan[]>(() => {
-  const result = probe.result.value
-  if (!result || !analysis.value || !contour.value)
-    return []
-  return [
-    ...analysis.value.spans,
-    ...findUntranscribedSpeech(contour.value, result.reference, { ...untranscribedOptions }, result.probe),
+function annotate(result: ProbeResult) {
+  const analysis = analyzeHypotheses(result.reference, result.samples.map(sample => sample.hypothesis), result.durationSeconds, { ...analysisOptions })
+  const contour = measureIntensity(result.clip, sampleRate, { ...nucleusOptions })
+  const spans: UncertainSpan[] = [
+    ...analysis.spans,
+    ...findUntranscribedSpeech(contour, result.reference, { ...untranscribedOptions }, result.probe),
   ].toSorted((a, b) => (a.start ?? a.tokenStart) - (b.start ?? b.tokenStart))
-})
+  return { analysis, contour, spans, llmText: formatForLlm(result.reference, spans) }
+}
 
-const llmPreview = computed(() => probe.result.value ? formatForLlm(probe.result.value.reference, spans.value) : '')
+const liveTexts = computed(() => new Map(live.utterances.value.flatMap(utterance => utterance.result ? [[utterance.id, annotate(utterance.result).llmText] as const] : [])))
+
+const shown = computed(() => {
+  const utterance = live.utterances.value.find(candidate => candidate.id === selectedUtteranceId.value)
+  return selectedUtteranceId.value === undefined ? probe.result.value : utterance?.result
+})
+const annotation = computed(() => shown.value ? annotate(shown.value) : undefined)
+const shownBlob = computed(() => shown.value ? new Blob([toWav(new Float32Array(shown.value.clip).buffer, sampleRate)], { type: 'audio/wav' }) : undefined)
+const shownUrl = useObjectUrl(shownBlob)
+const player = useTemplateRef<HTMLAudioElement>('player')
 
 function referenceText(span: UncertainSpan) {
-  const tokens = probe.result.value?.reference.tokens.slice(span.tokenStart, span.tokenEnd) ?? []
+  const tokens = shown.value?.reference.tokens.slice(span.tokenStart, span.tokenEnd) ?? []
   return joinTokens(tokens.map(token => token.text))
 }
 
@@ -184,7 +220,16 @@ function agreementLabel(value: number | undefined) {
   return value === undefined ? '-' : value.toFixed(2)
 }
 
-onBeforeUnmount(() => recording.value?.stop())
+function utteranceStatus(utterance: (typeof live.utterances.value)[number]) {
+  if (utterance.status === 'error')
+    return utterance.error ?? 'Failed'
+  if (utterance.status === 'decoding')
+    return `Decode ${utterance.progress.done} of ${utterance.progress.total}`
+  const decodes = utterance.result?.stoppedEarly ? `${utterance.result.samples.length} decodes agreed, stopped early` : `${utterance.result?.samples.length ?? 0} decodes`
+  return `${decodes}, ready ${utterance.latency?.toFixed(1) ?? '-'} s after the endpoint`
+}
+
+onBeforeUnmount(() => recording.value?.abort())
 </script>
 
 <template>
@@ -211,8 +256,8 @@ onBeforeUnmount(() => recording.value?.stop())
             Records without echo cancellation, noise suppression, or gain control, so the probe sees the raw input.
           </div>
           <div>
-            <Button v-if="!recording" icon="i-solar:microphone-3-bold-duotone" label="Record" @click="startRecording" />
-            <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="recording.stop()" />
+            <Button v-if="!recording" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="listening" @click="startRecording" />
+            <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="recording.abort()" />
           </div>
         </div>
       </div>
@@ -220,7 +265,7 @@ onBeforeUnmount(() => recording.value?.stop())
         {{ clipError }}
       </p>
       <div v-if="clip" :class="['flex flex-wrap items-center gap-4 text-sm']">
-        <audio ref="player" :src="clipUrl" controls />
+        <audio :src="clipUrl" controls />
         <span>{{ clipSeconds.toFixed(1) }} s</span>
         <span v-if="clipSeconds > longClipSeconds" :class="['text-amber-600 dark:text-amber-400']">
           Long clip. Each decode takes about as long as the clip, so trim it for faster runs.
@@ -232,14 +277,28 @@ onBeforeUnmount(() => recording.value?.stop())
       <h2 :class="['text-lg font-semibold']">
         Run
       </h2>
-      <FieldSelect v-model="modelId" label="Model" description="Downloads the model when it is not installed yet." :options="modelOptions" />
+      <fieldset :disabled="decodersInUse" :class="['flex flex-col gap-4']">
+        <FieldSelect v-model="modelId" label="Model" description="Downloads the model when it is not installed yet." :options="modelOptions" :disabled="decodersInUse" />
+        <FieldRange
+          v-model="run.workers"
+          label="Decoder Workers"
+          description="Decodes that run at the same time. Each Worker holds its own copy of the model, so each one adds about the model size in memory."
+          :min="1" :max="8" :step="1"
+        />
+      </fieldset>
       <div :class="['grid gap-4 md:grid-cols-2']">
         <FieldRange v-model="run.count" label="Perturbed decodes" :min="2" :max="32" :step="1" />
-        <FieldRange v-model="run.seed" label="Seed" description="The same seed repeats the same perturbations." :min="1" :max="100" :step="1" />
+        <FieldRange
+          v-model="run.firstCount"
+          label="Early stop after"
+          description="These decodes run first. The others run only when one of them differs from the reference. 0 runs all of them."
+          :min="0" :max="8" :step="1"
+        />
         <FieldRange v-model="run.snrMinDb" label="Lowest SNR" :min="0" :max="40" :step="1" :format-value="value => `${value} dB`" />
         <FieldRange v-model="run.snrMaxDb" label="Highest SNR" :min="0" :max="40" :step="1" :format-value="value => `${value} dB`" />
         <FieldRange v-model="run.maxShiftMs" label="Largest time shift" description="Moves the chunk boundaries of streaming models." :min="0" :max="200" :step="5" :format-value="value => `${value} ms`" />
         <FieldRange v-model="run.speedSpreadPercent" label="Speed spread" :min="0" :max="10" :step="0.5" :format-value="value => `±${value}%`" />
+        <FieldRange v-model="run.seed" label="Seed" description="The same seed repeats the same perturbations." :min="1" :max="100" :step="1" />
         <FieldRange
           v-model="run.blankPenalty"
           label="Blank penalty probe"
@@ -248,10 +307,13 @@ onBeforeUnmount(() => recording.value?.stop())
         />
       </div>
       <div :class="['flex flex-wrap items-center gap-4']">
-        <Button variant="primary" color="primary" icon="i-solar:play-bold" label="Run probe" :disabled="!clip || busy || !modelId" @click="startProbe" />
+        <Button variant="primary" color="primary" icon="i-solar:play-bold" label="Probe the clip" :disabled="!clip || busy || !modelId" @click="startProbe" />
         <Button v-if="busy" label="Stop" @click="probe.cancel()" />
         <span v-if="probe.status.value === 'loading'" :class="['text-sm']">Loading the model...</span>
         <span v-if="probe.status.value === 'decoding'" :class="['text-sm']">Decode {{ probe.progress.value.done }} of {{ probe.progress.value.total }}</span>
+        <span v-if="probe.status.value === 'done' && probe.result.value?.stoppedEarly" :class="['text-sm text-neutral-500']">
+          The first {{ probe.result.value.samples.length }} decodes matched the reference, so the others did not run.
+        </span>
       </div>
       <Progress v-if="busy" :progress="progressPercent" />
       <p v-if="probe.error.value" :class="['text-sm text-red-500']">
@@ -259,20 +321,67 @@ onBeforeUnmount(() => recording.value?.stop())
       </p>
     </section>
 
-    <section v-if="probe.result.value && analysis && contour" :class="['flex flex-col gap-4']">
+    <section :class="['flex flex-col gap-4']">
+      <h2 :class="['text-lg font-semibold']">
+        Live
+      </h2>
+      <div :class="['text-xs text-neutral-500 dark:text-neutral-400']">
+        One Worker decodes the input as it arrives. After each endpoint, the segment goes to the probe with the run settings above.
+        A segment without words is probed only when it holds syllables as loud as earlier speech, because the model can delete a whole utterance.
+      </div>
+      <FieldSelect v-model="liveSource" label="Input" :options="liveSourceOptions" :disabled="listening" />
+      <div :class="['flex flex-wrap items-center gap-4']">
+        <Button
+          v-if="!listening"
+          variant="primary" color="primary" icon="i-solar:soundwave-bold-duotone" label="Start"
+          :disabled="!modelId || recording !== undefined || (liveSource === 'clip' && !clip)"
+          @click="startLive"
+        />
+        <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="live.stop()" />
+        <span v-if="live.status.value === 'loading'" :class="['text-sm']">Loading the model...</span>
+        <span v-if="live.status.value === 'listening'" :class="['text-sm text-neutral-500']">Listening</span>
+      </div>
+      <p v-if="live.error.value" :class="['text-sm text-red-500']">
+        {{ live.error.value }}
+      </p>
+      <p v-if="live.partial.value" :class="['text-sm italic text-neutral-500']">
+        {{ live.partial.value }}
+      </p>
+      <button
+        v-for="utterance in live.utterances.value"
+        :key="utterance.id"
+        type="button"
+        :disabled="!utterance.result"
+        :class="[
+          'flex flex-col gap-1 rounded-lg p-2 text-left text-sm',
+          'bg-neutral-100 dark:bg-neutral-800',
+          'enabled:hover:bg-neutral-200 dark:enabled:hover:bg-neutral-700',
+          { 'ring-2 ring-primary-400': selectedUtteranceId === utterance.id },
+        ]"
+        @click="selectedUtteranceId = utterance.id"
+      >
+        <span :class="['font-mono text-xs text-neutral-500']">
+          {{ utterance.start.toFixed(1) }}-{{ utterance.end.toFixed(1) }} s · {{ utteranceStatus(utterance) }}
+        </span>
+        <span>{{ liveTexts.get(utterance.id) ?? (utterance.liveText || '(no words)') }}</span>
+      </button>
+    </section>
+
+    <section v-if="shown && annotation" :class="['flex flex-col gap-4']">
       <h2 :class="['text-lg font-semibold']">
         Result
       </h2>
       <div :class="['text-xs text-neutral-500 dark:text-neutral-400']">
         Click the chart to play from that point. Span colors: amber is unstable, red is dropped, violet is untranscribed.
       </div>
+      <audio ref="player" :src="shownUrl" controls />
       <UncertaintyTimeline
-        :duration-seconds="probe.result.value.durationSeconds"
-        :contour="contour"
-        :tokens="analysis.tokens"
-        :timeline="analysis.timeline"
-        :spans="spans"
-        :probe-tokens="probe.result.value.probe?.tokens"
+        :duration-seconds="shown.durationSeconds"
+        :contour="annotation.contour"
+        :tokens="annotation.analysis.tokens"
+        :timeline="annotation.analysis.timeline"
+        :spans="annotation.spans"
+        :probe-tokens="shown.probe?.tokens"
         :agreement-threshold="analysisOptions.agreementThreshold"
         @seek="play"
       />
@@ -281,18 +390,18 @@ onBeforeUnmount(() => recording.value?.stop())
         <div :class="['text-sm font-medium']">
           What the LLM would read
         </div>
-        <pre :class="['whitespace-pre-wrap rounded-lg p-3 text-sm', 'bg-neutral-100 dark:bg-neutral-800']">{{ llmPreview }}</pre>
+        <pre :class="['whitespace-pre-wrap rounded-lg p-3 text-sm', 'bg-neutral-100 dark:bg-neutral-800']">{{ annotation.llmText }}</pre>
       </div>
 
       <div :class="['flex flex-col gap-2']">
         <div :class="['text-sm font-medium']">
           Spans
         </div>
-        <p v-if="spans.length === 0" :class="['text-sm text-neutral-500']">
+        <p v-if="annotation.spans.length === 0" :class="['text-sm text-neutral-500']">
           No spans at these thresholds.
         </p>
         <button
-          v-for="(span, index) in spans"
+          v-for="(span, index) in annotation.spans"
           :key="index"
           type="button"
           :class="['flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-lg p-2 text-left text-sm', 'bg-neutral-100 dark:bg-neutral-800', 'hover:bg-neutral-200 dark:hover:bg-neutral-700']"
@@ -306,7 +415,6 @@ onBeforeUnmount(() => recording.value?.stop())
           </span>
         </button>
       </div>
-
       <details :class="['text-sm']">
         <summary :class="['cursor-pointer font-medium']">
           Thresholds
@@ -328,7 +436,7 @@ onBeforeUnmount(() => recording.value?.stop())
         </summary>
         <div :class="['flex flex-wrap gap-1 pt-2 font-mono text-xs']">
           <span
-            v-for="(agreement, index) in analysis.tokens"
+            v-for="(agreement, index) in annotation.analysis.tokens"
             :key="index"
             :title="`time ${agreement.token.time?.toFixed(2) ?? '-'} s, log p ${agreement.token.logProbability?.toFixed(2) ?? '-'}`"
             :class="['flex flex-col items-center rounded px-1', 'bg-neutral-100 dark:bg-neutral-800']"
@@ -361,19 +469,19 @@ onBeforeUnmount(() => recording.value?.stop())
               <td colspan="3">
                 reference
               </td>
-              <td>{{ joinTokens(probe.result.value.reference.tokens.map(token => token.text)) }}</td>
+              <td>{{ joinTokens(shown.reference.tokens.map(token => token.text)) }}</td>
             </tr>
-            <tr v-for="(sample, index) in probe.result.value.samples" :key="index">
+            <tr v-for="(sample, index) in shown.samples" :key="index">
               <td>{{ sample.perturbation.snrDb.toFixed(1) }} dB</td>
               <td>{{ sample.perturbation.shiftMs.toFixed(0) }} ms</td>
               <td>{{ sample.perturbation.speed.toFixed(3) }}</td>
               <td>{{ joinTokens(sample.hypothesis.tokens.map(token => token.text)) }}</td>
             </tr>
-            <tr v-if="probe.result.value.probe">
+            <tr v-if="shown.probe">
               <td colspan="3">
                 blank penalty
               </td>
-              <td>{{ joinTokens(probe.result.value.probe.tokens.map(token => token.text)) }}</td>
+              <td>{{ joinTokens(shown.probe.tokens.map(token => token.text)) }}</td>
             </tr>
           </tbody>
         </table>

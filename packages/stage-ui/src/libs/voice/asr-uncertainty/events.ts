@@ -4,7 +4,7 @@ import { defineInvokeEventa } from '@moeru/eventa'
 
 /** A Sherpaw preload pack and the recognizer settings that read it. */
 export interface DecoderModel {
-  /** `preload.data`. The worker takes ownership, so the caller transfers it. */
+  /** `preload.data`. Each worker gets its own copy. */
   readonly data: ArrayBuffer
   readonly metadata: SherpawModelPack['metadata']
   readonly recognizer: 'paraformer' | 'transducer'
@@ -40,5 +40,29 @@ export interface DecodeRequest {
   readonly blankPenalty: number
 }
 
+/** A segment that the live decoder closed, at an endpoint or at the end of the input. */
+export interface LiveEndpoint {
+  /** Has no tokens when the model heard nothing. The audio can still hold speech that the model deleted. */
+  readonly segment: RawSegment
+  /** Seconds from the first accepted sample to the end of the segment. */
+  readonly endTime: number
+}
+
+export interface LiveUpdate {
+  /** The open segment. Undefined when it has no tokens yet. */
+  readonly partial?: RawSegment
+  readonly endpoints: readonly LiveEndpoint[]
+}
+
+export interface LiveChunk {
+  /** Mono PCM in [-1, 1] at the sample rate of `decoderListen`. The worker takes ownership. */
+  readonly samples: Float32Array<ArrayBuffer>
+}
+
 export const decoderLoad = defineInvokeEventa<void, DecoderModel>('voice:asr-uncertainty:decoder:load')
 export const decoderDecode = defineInvokeEventa<RawSegment[], DecodeRequest>('voice:asr-uncertainty:decoder:decode')
+/** Opens the live stream. A second call drops the open stream and starts a new one. */
+export const decoderListen = defineInvokeEventa<void, { sampleRate: number }>('voice:asr-uncertainty:decoder:listen')
+export const decoderAccept = defineInvokeEventa<LiveUpdate, LiveChunk>('voice:asr-uncertainty:decoder:accept')
+/** Flushes and closes the live stream. The result holds the last segment. */
+export const decoderFinish = defineInvokeEventa<LiveUpdate, void>('voice:asr-uncertainty:decoder:finish')
