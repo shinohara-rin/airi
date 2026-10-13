@@ -66,4 +66,18 @@ describe('findUntranscribedSpeech', () => {
 
     expect(findUntranscribedSpeech(contour, reference, defaultUntranscribedOptions)).toEqual([])
   })
+
+  it('marks nothing when the reference tokens have no times', () => {
+    const contour = measureIntensity(syllables, sampleRate, defaultNucleusOptions)
+    // Online Paraformer reports tokens without times.
+    const reference = { tokens: [{ text: '我' }, { text: '那' }, { text: '个' }] }
+
+    expect(findUntranscribedSpeech(contour, reference, defaultUntranscribedOptions)).toEqual([])
+  })
+
+  it('marks the syllables of a reference without tokens', () => {
+    const contour = measureIntensity(syllables, sampleRate, defaultNucleusOptions)
+
+    expect(findUntranscribedSpeech(contour, { tokens: [] }, defaultUntranscribedOptions)).toHaveLength(1)
+  })
 })

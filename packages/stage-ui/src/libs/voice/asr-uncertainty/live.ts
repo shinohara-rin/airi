@@ -107,14 +107,16 @@ export interface LiveStreamPlan {
 }
 
 /**
- * Spreads the live streams over `workerCount` Workers.
+ * Spreads the live streams over at most `workerCount` Workers, and never over more Workers than streams.
  *
  * The clean reference leads in Worker 0. Its endpoints decide where every stream is cut. Each rollout
  * and the blank penalty stream go to the Worker with the fewest streams. A follower wins a tie, so the
  * leading Worker keeps up with the input first, and the partial text and the endpoints come on time.
  */
 export function planLiveStreams(perturbations: readonly Perturbation[], blankPenalty: number, workerCount: number): LiveStreamPlan {
-  const workers: LiveStreamSpec[][] = Array.from({ length: Math.max(1, workerCount) }, () => [])
+  // A Worker without streams would load the model for nothing.
+  const streamCount = 1 + perturbations.length + (blankPenalty > 0 ? 1 : 0)
+  const workers: LiveStreamSpec[][] = Array.from({ length: Math.max(1, Math.min(workerCount, streamCount)) }, () => [])
   workers[0].push({ blankPenalty: 0 })
   // Followers come first in this order, so they win ties.
   const order = [...workers.keys()].slice(1).concat(0)

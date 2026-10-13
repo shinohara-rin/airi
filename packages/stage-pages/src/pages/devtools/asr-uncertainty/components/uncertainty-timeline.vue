@@ -38,23 +38,29 @@ function x(seconds: number) {
   return props.durationSeconds === 0 ? 0 : seconds / props.durationSeconds * width.value
 }
 
+/**
+ * The dB range of the intensity band. The lower bound sits 10 dB under the silence threshold, so silence
+ * stays visible as a flat floor. A loop finds the peak, because a long clip has more frames than a call
+ * can take as arguments.
+ */
+const intensityRange = computed(() => {
+  const low = props.contour.silenceDb - 10
+  return { low, high: props.contour.db.reduce((peak, value) => Math.max(peak, value), low + 1) }
+})
+
 const intensityPath = computed(() => {
-  const { db, hopSeconds, silenceDb } = props.contour
+  const { db, hopSeconds } = props.contour
   if (db.length === 0)
     return ''
-  // The lower bound sits 10 dB under the silence threshold, so silence stays visible as a flat floor.
-  const low = silenceDb - 10
-  const high = Math.max(low + 1, ...db)
+  const { low, high } = intensityRange.value
   const { top, height: bandHeight } = rows.intensity
   const y = (value: number) => top + bandHeight * (1 - Math.min(1, Math.max(0, (value - low) / (high - low))))
   return Array.from(db, (value, frame) => `${frame === 0 ? 'M' : 'L'}${x(frame * hopSeconds).toFixed(1)},${y(value).toFixed(1)}`).join(' ')
 })
 
 const silenceY = computed(() => {
-  const { db, silenceDb } = props.contour
-  const low = silenceDb - 10
-  const high = Math.max(low + 1, ...db)
-  return rows.intensity.top + rows.intensity.height * (1 - (silenceDb - low) / (high - low))
+  const { low, high } = intensityRange.value
+  return rows.intensity.top + rows.intensity.height * (1 - (props.contour.silenceDb - low) / (high - low))
 })
 
 function curvePath(value: (bin: TimelineBin) => number) {
@@ -114,8 +120,10 @@ const ticks = computed(() => {
 })
 
 function handleClick(event: MouseEvent) {
-  if (width.value > 0)
-    emit('seek', event.offsetX / width.value * props.durationSeconds)
+  // `offsetX` counts from the clicked child, such as a token label, so measure from the chart instead.
+  const bounds = (event.currentTarget as SVGSVGElement).getBoundingClientRect()
+  if (bounds.width > 0)
+    emit('seek', Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)) * props.durationSeconds)
 }
 </script>
 

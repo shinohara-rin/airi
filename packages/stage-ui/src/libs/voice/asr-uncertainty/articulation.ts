@@ -118,8 +118,13 @@ export const defaultUntranscribedOptions: Readonly<UntranscribedOptions> = Objec
  *
  * `probe` is an optional decode with a blank penalty. Its tokens inside a span become the span's
  * variants, so the LLM gets a guess of the missing words.
+ *
+ * Tokens without times, as from online Paraformer, cannot account for nuclei, so such a reference gets no
+ * spans. A reference without tokens still gets them, because none of its speech was transcribed.
  */
 export function findUntranscribedSpeech(contour: IntensityContour, reference: Hypothesis, options: UntranscribedOptions, probe?: Hypothesis): UncertainSpan[] {
+  if (reference.tokens.some(token => token.time === undefined && normalizeToken(token.text) !== ''))
+    return []
   const tokenTimes = reference.tokens
     .filter(token => token.time !== undefined && normalizeToken(token.text) !== '')
     .map(token => token.time!)

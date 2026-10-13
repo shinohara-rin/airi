@@ -70,6 +70,12 @@ describe('planLiveStreams', () => {
     expect(plan.workers[0][1]).toEqual({ blankPenalty: 2 })
   })
 
+  it('plans no Worker without streams', () => {
+    const plan = planLiveStreams(perturbations.slice(0, 2), 0, 8)
+
+    expect(plan.workers.map(streams => streams.length)).toEqual([1, 1, 1])
+  })
+
   it('gives the leading Worker no more streams than any follower', () => {
     const plan = planLiveStreams(samplePerturbations(8, { snrDb: [10, 20], shiftMs: [0, 0], speed: [1, 1] }, 1), 2, 3)
 

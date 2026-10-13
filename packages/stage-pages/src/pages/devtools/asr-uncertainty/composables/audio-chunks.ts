@@ -37,6 +37,8 @@ export async function* replayChunks(samples: Float32Array, sampleRate: number, s
   for (let start = 0; start < samples.length && !signal.aborted; start += block) {
     const dueAt = startedAt + start / sampleRate * 1000
     await new Promise(resolve => setTimeout(resolve, Math.max(0, dueAt - performance.now())))
+    if (signal.aborted)
+      return
     yield samples.slice(start, start + block)
   }
 }

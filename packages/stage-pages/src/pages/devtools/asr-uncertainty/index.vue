@@ -82,14 +82,19 @@ function concat(parts: readonly Float32Array[]) {
   return output
 }
 
+/** The read of the last selected file. A new selection aborts it, so an older file cannot replace a newer one. */
+let fileRead: AbortController | undefined
+
 watch(files, async (selected) => {
   const file = selected?.[0]
   if (!file)
     return
+  fileRead?.abort()
+  const controller = new AbortController()
+  fileRead = controller
+  const { signal } = controller
   clipError.value = undefined
   try {
-    // Nothing cancels a file read. The controller exists because both readers require a signal.
-    const { signal } = new AbortController()
     const reader = new Pcm16Encoder(fileSource(file).open(signal), { sampleRate, signal }).stream.getReader()
     const parts: Float32Array[] = []
     for (;;) {
@@ -98,10 +103,12 @@ watch(files, async (selected) => {
         break
       parts.push(toFloat32FromPCM16(value))
     }
-    clip.value = concat(parts)
+    if (!signal.aborted)
+      clip.value = concat(parts)
   }
   catch (error) {
-    clipError.value = errorMessageFrom(error) ?? 'Could not read the file.'
+    if (!signal.aborted)
+      clipError.value = errorMessageFrom(error) ?? 'Could not read the file.'
   }
 })
 
@@ -294,7 +301,7 @@ onBeforeUnmount(() => recording.value?.abort())
         <FieldRange
           v-model="run.firstCount"
           label="Early stop after"
-          description="These decodes run first. The others run only when one of them differs from the reference. 0 runs all of them. Clip only."
+          description="These decodes run first. The others run only when the words of one of them differ from the reference. Token times do not count. 0 runs all of them. Clip only."
           :min="0" :max="8" :step="1"
         />
         <FieldRange v-model="run.snrMinDb" label="Lowest SNR" :min="0" :max="40" :step="1" :format-value="value => `${value} dB`" />

@@ -15,8 +15,8 @@ export interface ProbeSettings {
   /** Blank penalty of the extra decode that exposes deleted speech. `0` skips that decode. */
   readonly blankPenalty: number
   /**
-   * Perturbed decodes that run first. The others run only when one of these differs from the reference.
-   * A value of `count` or more, or `0`, turns the early stop off.
+   * Perturbed decodes that run first. The others run only when the words of one of these differ from
+   * the reference. Token times do not count. A value of `count` or more, or `0`, turns the early stop off.
    */
   readonly firstCount: number
 }
