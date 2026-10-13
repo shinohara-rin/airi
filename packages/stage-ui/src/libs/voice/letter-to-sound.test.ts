@@ -15,6 +15,6 @@ describe('guessPhones', () => {
   })
 
   it('reads a doubled consonant once', () => {
-    expect(guessPhones('zustandd')).toEqual(guessPhones('zustand'))
+    expect(guessPhones('zustandd')).toEqual(['Z', 'AH1', 'S', 'T', 'AE0', 'N', 'D'])
   })
 })
