@@ -415,20 +415,20 @@ catalogs:
       specifier: ^2.40.1
       version: 2.40.1
     '@sherpaw/asr':
-      specifier: git+https://github.com/shinohara-rin/sherpaw.git#87754ce33d056185f327a6588a0d4e9da1e5f7ad&path:/asr
-      version: 0.3.1-fork.7fa2661
+      specifier: git+https://github.com/shinohara-rin/sherpaw.git#e1e0e3e63aed08e533bec858f6733452eb05e9b9&path:/asr
+      version: 0.3.1-fork.2ff318d
     '@sherpaw/kws':
-      specifier: git+https://github.com/shinohara-rin/sherpaw.git#87754ce33d056185f327a6588a0d4e9da1e5f7ad&path:/kws
-      version: 0.3.1-fork.7fa2661
+      specifier: git+https://github.com/shinohara-rin/sherpaw.git#e1e0e3e63aed08e533bec858f6733452eb05e9b9&path:/kws
+      version: 0.3.1-fork.2ff318d
     '@sherpaw/preloader':
-      specifier: git+https://github.com/shinohara-rin/sherpaw.git#87754ce33d056185f327a6588a0d4e9da1e5f7ad&path:/preloader
-      version: 0.3.1-fork.7fa2661
+      specifier: git+https://github.com/shinohara-rin/sherpaw.git#e1e0e3e63aed08e533bec858f6733452eb05e9b9&path:/preloader
+      version: 0.3.1-fork.2ff318d
     '@sherpaw/shared':
-      specifier: git+https://github.com/shinohara-rin/sherpaw.git#87754ce33d056185f327a6588a0d4e9da1e5f7ad&path:/shared
-      version: 0.3.1-fork.7fa2661
+      specifier: git+https://github.com/shinohara-rin/sherpaw.git#e1e0e3e63aed08e533bec858f6733452eb05e9b9&path:/shared
+      version: 0.3.1-fork.2ff318d
     '@sherpaw/xsai-transcription':
-      specifier: git+https://github.com/shinohara-rin/sherpaw.git#87754ce33d056185f327a6588a0d4e9da1e5f7ad&path:/xsai-transcription
-      version: 0.3.1-fork.7fa2661
+      specifier: git+https://github.com/shinohara-rin/sherpaw.git#e1e0e3e63aed08e533bec858f6733452eb05e9b9&path:/xsai-transcription
+      version: 0.3.1-fork.2ff318d
     '@shikijs/markdown-it':
       specifier: ^4.4.3
       version: 4.4.3
@@ -4297,16 +4297,16 @@ importers:
         version: link:../audio
       '@sherpaw/asr':
         specifier: 'catalog:'
-        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/asr(onnxruntime-web@1.27.0)
+        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/asr(onnxruntime-web@1.27.0)
       '@sherpaw/preloader':
         specifier: 'catalog:'
-        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/preloader
+        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/preloader
       '@sherpaw/shared':
         specifier: 'catalog:'
-        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/shared
+        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/shared
       '@sherpaw/xsai-transcription':
         specifier: 'catalog:'
-        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/xsai-transcription(@sherpaw/asr@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/asr(onnxruntime-web@1.27.0))(@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/preloader)(@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/shared)(electron@43.4.1(supports-color@10.2.2))(web-worker@1.5.0)
+        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/xsai-transcription(@sherpaw/asr@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/asr(onnxruntime-web@1.27.0))(@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/preloader)(@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/shared)(electron@43.4.1(supports-color@10.2.2))(web-worker@1.5.0)
       '@xsai-ext/providers':
         specifier: 'catalog:'
         version: 0.5.1
@@ -4920,19 +4920,19 @@ importers:
         version: 1.68.0
       '@sherpaw/asr':
         specifier: 'catalog:'
-        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/asr(onnxruntime-web@1.27.0)
+        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/asr(onnxruntime-web@1.27.0)
       '@sherpaw/kws':
         specifier: 'catalog:'
-        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/kws(@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/preloader)(@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/shared)(electron@43.4.1(supports-color@10.2.2))(hono@4.13.3)(web-worker@1.5.0)
+        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/kws(@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/preloader)(@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/shared)(electron@43.4.1(supports-color@10.2.2))(hono@4.13.3)(web-worker@1.5.0)
       '@sherpaw/preloader':
         specifier: 'catalog:'
-        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/preloader
+        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/preloader
       '@sherpaw/shared':
         specifier: 'catalog:'
-        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/shared
+        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/shared
       '@sherpaw/xsai-transcription':
         specifier: 'catalog:'
-        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/xsai-transcription(@sherpaw/asr@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/asr(onnxruntime-web@1.27.0))(@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/preloader)(@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/shared)(electron@43.4.1(supports-color@10.2.2))(web-worker@1.5.0)
+        version: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/xsai-transcription(@sherpaw/asr@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/asr(onnxruntime-web@1.27.0))(@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/preloader)(@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/shared)(electron@43.4.1(supports-color@10.2.2))(web-worker@1.5.0)
       '@shikijs/rehype':
         specifier: 'catalog:'
         version: 4.4.3
@@ -11575,37 +11575,37 @@ packages:
   '@sec-ant/readable-stream@0.4.1':
     resolution: {integrity: sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg==}
 
-  '@sherpaw/asr@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/asr':
-    resolution: {gitHosted: true, integrity: sha512-4fHcdZDLLTEVxVyGNiKwT2qP/b7XKtvyigQwSq/0AoZL5EKRuPMq5Ug70mq0ArFrX3jFCuWJILL6EylRInGBdQ==, path: /asr, tarball: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad}
-    version: 0.3.1-fork.7fa2661
+  '@sherpaw/asr@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/asr':
+    resolution: {gitHosted: true, integrity: sha512-Xh8DsJGWqOSE0Vzve4oZJudv6oTC8+Y1Z/qcEj63zys1WBoRAIIwtg5RNXyN7hwiPSiDo45DXpRT+Vqs1PxAIg==, path: /asr, tarball: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9}
+    version: 0.3.1-fork.2ff318d
     peerDependencies:
       onnxruntime-web: 1.27.0
     peerDependenciesMeta:
       onnxruntime-web:
         optional: true
 
-  '@sherpaw/kws@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/kws':
-    resolution: {gitHosted: true, integrity: sha512-4fHcdZDLLTEVxVyGNiKwT2qP/b7XKtvyigQwSq/0AoZL5EKRuPMq5Ug70mq0ArFrX3jFCuWJILL6EylRInGBdQ==, path: /kws, tarball: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad}
-    version: 0.3.1-fork.7fa2661
+  '@sherpaw/kws@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/kws':
+    resolution: {gitHosted: true, integrity: sha512-Xh8DsJGWqOSE0Vzve4oZJudv6oTC8+Y1Z/qcEj63zys1WBoRAIIwtg5RNXyN7hwiPSiDo45DXpRT+Vqs1PxAIg==, path: /kws, tarball: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9}
+    version: 0.3.1-fork.2ff318d
     peerDependencies:
-      '@sherpaw/preloader': 0.3.1-fork.7fa2661
-      '@sherpaw/shared': 0.3.1-fork.7fa2661
+      '@sherpaw/preloader': 0.3.1-fork.2ff318d
+      '@sherpaw/shared': 0.3.1-fork.2ff318d
 
-  '@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/preloader':
-    resolution: {gitHosted: true, integrity: sha512-4fHcdZDLLTEVxVyGNiKwT2qP/b7XKtvyigQwSq/0AoZL5EKRuPMq5Ug70mq0ArFrX3jFCuWJILL6EylRInGBdQ==, path: /preloader, tarball: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad}
-    version: 0.3.1-fork.7fa2661
+  '@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/preloader':
+    resolution: {gitHosted: true, integrity: sha512-Xh8DsJGWqOSE0Vzve4oZJudv6oTC8+Y1Z/qcEj63zys1WBoRAIIwtg5RNXyN7hwiPSiDo45DXpRT+Vqs1PxAIg==, path: /preloader, tarball: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9}
+    version: 0.3.1-fork.2ff318d
 
-  '@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/shared':
-    resolution: {gitHosted: true, integrity: sha512-4fHcdZDLLTEVxVyGNiKwT2qP/b7XKtvyigQwSq/0AoZL5EKRuPMq5Ug70mq0ArFrX3jFCuWJILL6EylRInGBdQ==, path: /shared, tarball: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad}
-    version: 0.3.1-fork.7fa2661
+  '@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/shared':
+    resolution: {gitHosted: true, integrity: sha512-Xh8DsJGWqOSE0Vzve4oZJudv6oTC8+Y1Z/qcEj63zys1WBoRAIIwtg5RNXyN7hwiPSiDo45DXpRT+Vqs1PxAIg==, path: /shared, tarball: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9}
+    version: 0.3.1-fork.2ff318d
 
-  '@sherpaw/xsai-transcription@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/xsai-transcription':
-    resolution: {gitHosted: true, integrity: sha512-4fHcdZDLLTEVxVyGNiKwT2qP/b7XKtvyigQwSq/0AoZL5EKRuPMq5Ug70mq0ArFrX3jFCuWJILL6EylRInGBdQ==, path: /xsai-transcription, tarball: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad}
-    version: 0.3.1-fork.7fa2661
+  '@sherpaw/xsai-transcription@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/xsai-transcription':
+    resolution: {gitHosted: true, integrity: sha512-Xh8DsJGWqOSE0Vzve4oZJudv6oTC8+Y1Z/qcEj63zys1WBoRAIIwtg5RNXyN7hwiPSiDo45DXpRT+Vqs1PxAIg==, path: /xsai-transcription, tarball: https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9}
+    version: 0.3.1-fork.2ff318d
     peerDependencies:
-      '@sherpaw/asr': 0.3.1-fork.7fa2661
-      '@sherpaw/preloader': 0.3.1-fork.7fa2661
-      '@sherpaw/shared': 0.3.1-fork.7fa2661
+      '@sherpaw/asr': 0.3.1-fork.2ff318d
+      '@sherpaw/preloader': 0.3.1-fork.2ff318d
+      '@sherpaw/shared': 0.3.1-fork.2ff318d
 
   '@shikijs/core@3.23.0':
     resolution: {integrity: sha512-NSWQz0riNb67xthdm5br6lAkvpDJRTgB36fxlo37ZzM2yq0PQFFzbd8psqC2XMPgCzo1fW6cVi18+ArJ44wqgA==}
@@ -25848,15 +25848,15 @@ snapshots:
 
   '@sec-ant/readable-stream@0.4.1': {}
 
-  '@sherpaw/asr@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/asr(onnxruntime-web@1.27.0)':
+  '@sherpaw/asr@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/asr(onnxruntime-web@1.27.0)':
     optionalDependencies:
       onnxruntime-web: 1.27.0
 
-  '@sherpaw/kws@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/kws(@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/preloader)(@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/shared)(electron@43.4.1(supports-color@10.2.2))(hono@4.13.3)(web-worker@1.5.0)':
+  '@sherpaw/kws@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/kws(@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/preloader)(@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/shared)(electron@43.4.1(supports-color@10.2.2))(hono@4.13.3)(web-worker@1.5.0)':
     dependencies:
       '@moeru/eventa': 1.0.1(electron@43.4.1(supports-color@10.2.2))(hono@4.13.3)(web-worker@1.5.0)
-      '@sherpaw/preloader': https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/preloader
-      '@sherpaw/shared': https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/shared
+      '@sherpaw/preloader': https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/preloader
+      '@sherpaw/shared': https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/shared
     transitivePeerDependencies:
       - '@tauri-apps/api'
       - electron
@@ -25864,19 +25864,19 @@ snapshots:
       - hono
       - web-worker
 
-  '@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/preloader': {}
+  '@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/preloader': {}
 
-  '@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/shared':
+  '@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/shared':
     dependencies:
       '@types/emscripten': 1.41.6
 
-  '@sherpaw/xsai-transcription@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/xsai-transcription(@sherpaw/asr@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/asr(onnxruntime-web@1.27.0))(@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/preloader)(@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/shared)(electron@43.4.1(supports-color@10.2.2))(web-worker@1.5.0)':
+  '@sherpaw/xsai-transcription@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/xsai-transcription(@sherpaw/asr@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/asr(onnxruntime-web@1.27.0))(@sherpaw/preloader@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/preloader)(@sherpaw/shared@https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/shared)(electron@43.4.1(supports-color@10.2.2))(web-worker@1.5.0)':
     dependencies:
       '@moeru/eventa': 1.0.0-beta.1(electron@43.4.1(supports-color@10.2.2))(web-worker@1.5.0)
       '@moeru/std': 0.1.0-beta.17
-      '@sherpaw/asr': https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/asr(onnxruntime-web@1.27.0)
-      '@sherpaw/preloader': https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/preloader
-      '@sherpaw/shared': https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/87754ce33d056185f327a6588a0d4e9da1e5f7ad#path:/shared
+      '@sherpaw/asr': https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/asr(onnxruntime-web@1.27.0)
+      '@sherpaw/preloader': https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/preloader
+      '@sherpaw/shared': https://codeload.github.com/shinohara-rin/sherpaw/tar.gz/e1e0e3e63aed08e533bec858f6733452eb05e9b9#path:/shared
     transitivePeerDependencies:
       - electron
       - h3
