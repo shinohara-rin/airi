@@ -6,6 +6,7 @@ import type { UtteranceAudio } from '../composables/use-utterance-audio'
 
 import { useVoicePushToTalk } from '@proj-airi/stage-ui/composables/voice-input-mode'
 import { getSpeechBusContext, voiceInputLevel } from '@proj-airi/stage-ui/services/speech/bus'
+import { useAuthStore } from '@proj-airi/stage-ui/stores/auth'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
 import { useIOTracerStore } from '@proj-airi/stage-ui/stores/devtools/io-tracer'
 import { useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
@@ -70,11 +71,18 @@ const inputModeOptions = [
   { value: 'wake-word', label: 'Wake word', description: 'A wake word starts the input. A replayed clip cannot wake, so it holds the input like Push to Talk.' },
 ]
 
-const activeChat = computed(() => {
-  const sessionId = sessions.activeSessionId
-  if (!sessionId)
-    return undefined
-  return sessions.sessionMetas[sessionId]?.title || sessionId
+const { userId } = storeToRefs(useAuthStore())
+/**
+ * The chats of the signed-in user, newest first. Each window keeps its own chat selection, so the main
+ * window's selection does not reach a devtool window. The page selects its own target chat here.
+ */
+const chatOptions = computed(() => Object.values(sessions.sessionMetas)
+  .filter(meta => meta.userId === (userId.value || 'local'))
+  .toSorted((a, b) => b.updatedAt - a.updatedAt)
+  .map(meta => ({ value: meta.sessionId, label: meta.title || meta.sessionId })))
+const targetChat = computed({
+  get: () => sessions.activeSessionId,
+  set: sessionId => void sessions.setActiveSession(sessionId),
 })
 
 const phase = computed(() => voice.state?.phase ?? 'idle')
@@ -198,14 +206,12 @@ function selectTurn(turnId: string) {
         label="Send each turn to the chat"
         description="Off is a dry run: each turn stays a draft below, and you send or discard it."
       />
-      <div :class="['flex flex-col gap-1 text-sm']">
-        <div :class="['font-medium']">
-          Active chat
-        </div>
-        <div :class="['text-neutral-500 dark:text-neutral-400']">
-          {{ activeChat ?? 'No chat is active. Open a chat on the main page first.' }}
-        </div>
-      </div>
+      <FieldSelect
+        v-model="targetChat"
+        label="Chat"
+        :description="chatOptions.length ? 'Turns go to this chat. It is the selection of this window only.' : 'There is no chat yet. Open one on the main page first.'"
+        :options="chatOptions"
+      />
     </div>
 
     <div :class="['flex flex-wrap items-center gap-4']">

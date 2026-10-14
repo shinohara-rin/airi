@@ -72,8 +72,15 @@ export function useClipReplay() {
         if (!sessionId)
           throw new Error('Select a chat before you replay a clip.')
         const attempt = voice.beginManual(sessionId)
-        await Promise.race([source.clipEnded, stopped])
-        await Promise.race([sleep(RELEASE_TAIL_MS), stopped])
+        // The input can settle before it reads the clip, for example without a transcription provider.
+        const settledEarly = attempt.done.then((outcome) => {
+          if (outcome.status === 'failed')
+            throw new Error(`The input failed at the ${outcome.stage} stage: ${errorMessageFrom(outcome.error) ?? 'unknown error'}`)
+          if (outcome.status === 'cancelled')
+            throw new Error(`The input was cancelled: ${outcome.reason}`)
+        })
+        await Promise.race([source.clipEnded, stopped, settledEarly])
+        await Promise.race([sleep(RELEASE_TAIL_MS), stopped, settledEarly])
         if (!run.signal.aborted)
           await Promise.race([attempt.end(), stopped])
         // The end can wait for speech recognition and the chat. A stopped replay drops its turn instead.
