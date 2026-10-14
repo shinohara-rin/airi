@@ -12,6 +12,7 @@ import { useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings/audi
 import { useSpeechOutputControlStore } from '@proj-airi/stage-ui/stores/speech-output-control'
 import { computed, effectScope, onScopeDispose, ref, shallowRef, watch } from 'vue'
 
+import { stopMicrophoneRecordings } from './audio-chunks'
 import { holdSpeaking, useOtherWindowSpeakingHold } from './speaking-holds'
 
 export type LiveVoiceHost = ReturnType<typeof useLiveVoiceHost>
@@ -99,13 +100,22 @@ export function useLiveVoiceHost() {
 
   onScopeDispose(stop)
 
+  /** The host listens to the microphone all the time, so it takes any speech that a recording on the page hears as a turn. */
+  const listensAlways = computed(() => !!scope.value && devices.enabled && listensContinuously(hearing.inputMode))
+  // A change in another window, such as a synced Hearing input mode, can start continuous listening during a recording.
+  // The recording's lease does not pause this window's host, so the recording stops.
+  watch(listensAlways, (listens) => {
+    if (listens)
+      stopMicrophoneRecordings('The voice host began to listen all the time, so the recording stopped.')
+  }, { flush: 'sync' })
+
   /**
    * Why a diagnostic recording on the page cannot start now, or nothing.
-   * A host that listens all the time takes any speech that the recording hears as a turn: this page's host, or the host of
-   * another window that holds the listening lease. A recording claims the lease itself, so the main window host stops.
+   * This page's host or the host of another window that holds the listening lease can take the speech as a turn.
+   * A recording claims the lease itself, so the main window host stops.
    */
   const recordingBlocked = computed(() => {
-    if (scope.value && devices.enabled && listensContinuously(hearing.inputMode))
+    if (listensAlways.value)
       return 'Stop the voice host or turn off its microphone input first, because the host takes this speech as a turn.'
     if (leasedElsewhere.value)
       return 'Another window runs its own voice host, for example a second devtool window. Stop it first, because it takes this speech as a turn.'
