@@ -66,6 +66,15 @@ describe('matchUncertainSpans', () => {
     expect(candidate.span).toBe('ZUSTAN')
   })
 
+  it('drops a variant that only changes the case of a term that the transcript spells', () => {
+    const entries = phraseEntries(['Zustand'], pronounce, { source: 'conversation', description: '' })
+    const whole = locateTokens(['▁I', '▁use', '▁Zustand', '▁daily'])
+    const part = locateTokens(['▁I', '▁use', '▁Zu', 'stand', '▁daily'])
+
+    expect(matchUncertainSpans(whole, [{ kind: 'unstable', tokenStart: 2, tokenEnd: 3, variants: [{ text: 'ZUSTAND', count: 4 }] }], entries, [english])).toEqual([])
+    expect(matchUncertainSpans(part, [{ kind: 'unstable', tokenStart: 3, tokenEnd: 4, variants: [{ text: 'STAND', count: 4 }] }], entries, [english])).toEqual([])
+  })
+
   it('places a candidate of a dropped span at its insert position', () => {
     const transcript = locateTokens([...'我遇到了一只'])
     const dropped: UncertainSpan = { kind: 'dropped', tokenStart: 6, tokenEnd: 6, variants: [{ text: '硫方怪', count: 3 }] }

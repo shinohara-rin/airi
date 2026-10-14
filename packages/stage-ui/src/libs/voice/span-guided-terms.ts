@@ -85,7 +85,8 @@ export function spanRange(span: UncertainSpan, transcript: LocatedTranscript): r
  *
  * Each span is read once with its transcript text and once with each variant, with `contextTokens` of transcript on
  * each side. Only matches that touch the span count. A variant that already contains a written form of a term is a
- * match with score 1, because the matcher skips text that already spells the term.
+ * match with score 1, because the matcher skips text that already spells the term. A candidate whose transcript
+ * range already spells the term is dropped, because the transcript needs no change there.
  *
  * Use when:
  * - Uncertainty must decide which hotwords to boost. Pass the hotword phrases as entries.
@@ -106,8 +107,14 @@ export function matchUncertainSpans(
     return []
   const match = createPhoneticMatcher(entries, languages, { threshold, guessedThreshold })
   const { text, ranges } = transcript
+  const formsOf = new Map(entries.map(entry => [entry.term, entry.writtenForms.map(form => form.toLowerCase())]))
   const best = new Map<string, SpanCandidate>()
   const keep = (candidate: SpanCandidate) => {
+    // A variant can differ from the transcript only in case, for example `ZUSTAND` for `Zustand`. The transcript
+    // already spells the term there, so there is nothing to boost or suggest.
+    const spelled = candidate.span.toLowerCase()
+    if (formsOf.get(candidate.term)?.some(form => spelled.includes(form)))
+      return
     const key = `${candidate.spanIndex}:${candidate.term}`
     const kept = best.get(key)
     if (!kept || candidate.score > kept.score || (candidate.score === kept.score && (candidate.heardCount ?? 0) > (kept.heardCount ?? 0)))
