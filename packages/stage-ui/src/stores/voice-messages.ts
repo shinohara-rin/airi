@@ -5,7 +5,7 @@ import type { VoiceMessageCommand } from '../services/speech/bus'
 import { defineInvokeHandler } from '@moeru/eventa'
 import { encodeBase64 } from '@moeru/std/base64'
 import { defineStore } from 'pinia'
-import { onScopeDispose, shallowRef } from 'vue'
+import { onScopeDispose, shallowRef, watch } from 'vue'
 
 import { useListeningLeasedElsewhere } from '../composables/voice-listening-lease'
 import { VoiceMessage } from '../libs/voice/voice-message'
@@ -97,6 +97,16 @@ export const useVoiceMessagesStore = defineStore('voice-messages', () => {
     publish()
     return true
   }
+
+  // A lease of another window also stops the recordings that run now. The holder already hears the same speech.
+  watch(listeningLeasedElsewhere, (leased) => {
+    if (!leased)
+      return
+    for (const message of messages.values()) {
+      if (['pending', 'capturing'].includes(message.snapshot.phase))
+        message.cancel()
+    }
+  })
 
   function connect() {
     const stops = [

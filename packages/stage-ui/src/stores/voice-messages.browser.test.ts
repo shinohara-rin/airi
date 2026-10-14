@@ -7,7 +7,7 @@ import { createApp, defineComponent, h } from 'vue'
 import { createI18n } from 'vue-i18n'
 
 import { LEASE_DISCOVERY_MS } from '../composables/voice-listening-lease'
-import { getSpeechBusContext, voiceMessageCommand, voiceMessagesChanged } from '../services/speech/bus'
+import { getSpeechBusContext, voiceListeningLease, voiceMessageCommand, voiceMessagesChanged } from '../services/speech/bus'
 import { useVoiceMessagesStore } from './voice-messages'
 
 const cleanups: (() => void)[] = []
@@ -65,6 +65,19 @@ describe('voice messages host', () => {
     expect(message.error).toBeTypeOf('string')
     expect(message.audio?.type).toBe('audio/wav')
     expect(store.isRecording).toBe(false)
+  })
+
+  // Codex review on PR #30: a recording that started before the devtool claimed the lease kept taking the speech.
+  it('cancels a running recording when another window takes the lease', async () => {
+    const { latest } = await connectHost()
+    const bus = getSpeechBusContext()
+
+    await defineInvoke(bus, voiceMessageCommand)({ type: 'record', id: 'message', sessionId: 'alice' })
+    await expect.poll(() => latest()[0]?.phase).toBe('capturing')
+    bus.emit(voiceListeningLease, { holder: 'devtool-window', until: Date.now() + 60_000 })
+
+    await expect.poll(() => latest()).toEqual([])
+    bus.emit(voiceListeningLease, { holder: 'devtool-window', until: 0 })
   })
 
   it('finishes without sending when the control does not ask for it', async () => {

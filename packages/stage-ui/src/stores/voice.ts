@@ -83,6 +83,13 @@ export const useVoiceStore = defineStore('voice', () => {
   const inputTracer = createVoiceInputTracer()
   /** While another window holds the listening lease, it owns the microphone, so controls of other windows start no input here. */
   const listeningLeasedElsewhere = useListeningLeasedElsewhere()
+  // The lease also stops the inputs that such controls run now. The holder already hears the same speech.
+  watch(listeningLeasedElsewhere, (leased) => {
+    if (!leased)
+      return
+    for (const attempt of inputRequests.values())
+      attempt.cancel('Another window took the microphone')
+  })
 
   /**
    * Conversation terms that bias the next recognition request of each session.

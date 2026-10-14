@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { LEASE_DISCOVERY_MS } from '../composables/voice-listening-lease'
 import { getSpeechBusContext, voiceInputCommand, voiceListeningLease, voiceMessageCommand, voiceRequestSnapshot, voiceSnapshotChanged } from '../services/speech/bus'
+import { useHearingStore } from './modules/hearing'
 import { useVoiceStore } from './voice'
 import { useVoiceMessagesStore } from './voice-messages'
 
@@ -53,6 +54,29 @@ describe('useVoiceStore().connectOutput', () => {
     expect(begin).toEqual({ status: 'closed' })
     expect(record).toEqual({ status: 'closed' })
     bus.emit(voiceListeningLease, { holder: 'devtool-window', until: 0 })
+    disconnect()
+  })
+
+  // Codex review on PR #30: a recording that started before the devtool claimed the lease kept taking the speech.
+  it('stops the inputs of controls when another window takes the lease', async () => {
+    setActivePinia(createPinia())
+    const disconnect = useVoiceStore().connectOutput(() => {
+      throw new Error('The test sends no turn')
+    })
+    // A transcriber that waits, so the input stays open until something stops it.
+    vi.spyOn(useHearingStore(), 'createTranscriber').mockReturnValue({ transcribe: () => new ReadableStream() })
+    const bus = getSpeechBusContext()
+    let phase: string | undefined
+    const stop = bus.on(voiceSnapshotChanged, ({ body }) => phase = body?.input?.phase)
+    await new Promise(resolve => setTimeout(resolve, LEASE_DISCOVERY_MS + 20))
+
+    await defineInvoke(bus, voiceInputCommand)({ type: 'begin', requestId: 'request-1', sessionId: 'session-1' })
+    expect(phase).toBe('pending')
+    bus.emit(voiceListeningLease, { holder: 'devtool-window', until: Date.now() + 60_000 })
+
+    await expect.poll(() => phase).toBe('settled')
+    bus.emit(voiceListeningLease, { holder: 'devtool-window', until: 0 })
+    stop()
     disconnect()
   })
 })
