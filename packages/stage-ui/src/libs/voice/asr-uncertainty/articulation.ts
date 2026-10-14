@@ -35,6 +35,48 @@ export const defaultNucleusOptions: Readonly<NucleusOptions> = Object.freeze({
   minDipDb: 3,
 })
 
+/** A streaming transducer emits a token after its audio, never before, and less than this late. */
+const MAX_EMISSION_DELAY_SECONDS = 1
+const EMISSION_DELAY_STEP_SECONDS = 0.02
+/** With fewer timed tokens or nuclei, a delay fits by chance. */
+const MIN_DELAY_EVIDENCE = 3
+
+/**
+ * Estimates how long after its syllable the decoder emitted the tokens of `reference`.
+ *
+ * Token times are emission times. A streaming transducer emits a token only after it has heard the
+ * syllable, so its token times lag the speech. X-ASR emitted about 0.4 s late in a measured Mandarin clip.
+ * The estimate is the delay that puts the median text token closest to a nucleus. It is 0 when the clip
+ * has too few timed tokens or nuclei.
+ */
+export function estimateEmissionDelay(contour: Pick<IntensityContour, 'nuclei'>, reference: Hypothesis): number {
+  const times = reference.tokens
+    .filter(token => token.time !== undefined && normalizeToken(token.text) !== '')
+    .map(token => token.time!)
+  if (times.length < MIN_DELAY_EVIDENCE || contour.nuclei.length < MIN_DELAY_EVIDENCE)
+    return 0
+
+  let best = { delay: 0, distance: Number.POSITIVE_INFINITY }
+  for (let step = 0; step * EMISSION_DELAY_STEP_SECONDS <= MAX_EMISSION_DELAY_SECONDS; step++) {
+    const delay = step * EMISSION_DELAY_STEP_SECONDS
+    const distances = times
+      .map(time => Math.min(...contour.nuclei.map(nucleus => Math.abs(nucleus - (time - delay)))))
+      .toSorted((a, b) => a - b)
+    const median = distances[Math.floor(distances.length / 2)]!
+    // A later delay must fit clearly better, so a flat fit keeps the smaller delay.
+    if (median < best.distance - 1e-6)
+      best = { delay, distance: median }
+  }
+  return best.delay
+}
+
+/** Moves every token time of `hypothesis` earlier by `seconds`, and not before the clip start. */
+export function shiftTokenTimes(hypothesis: Hypothesis, seconds: number): Hypothesis {
+  if (seconds === 0)
+    return hypothesis
+  return { tokens: hypothesis.tokens.map(token => token.time === undefined ? token : { ...token, time: Math.max(0, token.time - seconds) }) }
+}
+
 /**
  * Finds syllable nuclei from loudness alone, after de Jong and Wempe (2009).
  *

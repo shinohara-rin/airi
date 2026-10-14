@@ -14,11 +14,13 @@ import {
   defaultAnalysisOptions,
   defaultNucleusOptions,
   defaultUntranscribedOptions,
+  estimateEmissionDelay,
   findUntranscribedSpeech,
   formatForLlm,
   joinTokens,
   locateTokens,
   measureIntensity,
+  shiftTokenTimes,
 } from '@proj-airi/stage-ui/libs/voice/asr-uncertainty'
 import { kwsVocabulary } from '@proj-airi/stage-ui/libs/voice/kws-model'
 import { english, pronounceEnglish } from '@proj-airi/stage-ui/libs/voice/phonetic-english'
@@ -235,16 +237,23 @@ function utteranceStatus(utterance: (typeof live.utterances.value)[number]) {
   return `${utterance.result?.samples.length ?? 0} rollouts, ready ${utterance.latency?.toFixed(1) ?? '-'} s after the endpoint`
 }
 
-/** Analysis reruns on every threshold change. The decodes stay as they are. */
+/**
+ * Analysis reruns on every threshold change. The decodes stay as they are.
+ * Token times move earlier by the emission delay of the decoder, so spans and nuclei line up with the audio.
+ */
 function annotate(result: ProbeResult) {
-  const analysis = analyzeHypotheses(result.reference, result.samples.map(sample => sample.hypothesis), result.durationSeconds, { ...analysisOptions })
   const contour = measureIntensity(result.clip, sampleRate, { ...nucleusOptions })
+  const emissionDelay = estimateEmissionDelay(contour, result.reference)
+  const reference = shiftTokenTimes(result.reference, emissionDelay)
+  const probeHypothesis = result.probe && shiftTokenTimes(result.probe, emissionDelay)
+  const samples = result.samples.map(sample => shiftTokenTimes(sample.hypothesis, emissionDelay))
+  const analysis = analyzeHypotheses(reference, samples, result.durationSeconds, { ...analysisOptions })
   const spans: UncertainSpan[] = [
     ...analysis.spans,
-    ...findUntranscribedSpeech(contour, result.reference, { ...untranscribedOptions }, result.probe),
+    ...findUntranscribedSpeech(contour, reference, { ...untranscribedOptions }, probeHypothesis),
   ].toSorted((a, b) => (a.start ?? a.tokenStart) - (b.start ?? b.tokenStart))
-  const transcript = locateTokens(result.reference.tokens.map(token => token.text))
-  return { analysis, contour, spans, transcript, llmText: formatForLlm(result.reference, spans) }
+  const transcript = locateTokens(reference.tokens.map(token => token.text))
+  return { analysis, contour, emissionDelay, probe: probeHypothesis, spans, transcript, llmText: formatForLlm(reference, spans) }
 }
 
 const liveTexts = computed(() => new Map(live.utterances.value.flatMap(utterance => utterance.result ? [[utterance.id, annotate(utterance.result).llmText] as const] : [])))
@@ -258,11 +267,32 @@ const shownBlob = computed(() => shown.value ? new Blob([toWav(new Float32Array(
 const shownUrl = useObjectUrl(shownBlob)
 const player = useTemplateRef<HTMLAudioElement>('player')
 
-function play(seconds: number) {
-  if (!player.value)
+/** A span covers the token times. This much audio on each side covers the whole syllables. */
+const SPAN_PLAYBACK_MARGIN_SECONDS = 0.1
+let playRequest = 0
+
+/** Plays from `start`. With `end`, playback stops there, so a span plays alone. */
+function play(start: number, end?: number) {
+  const element = player.value
+  if (!element)
     return
-  player.value.currentTime = Math.max(0, seconds)
-  void player.value.play()
+  const request = ++playRequest
+  element.currentTime = Math.max(0, start - (end === undefined ? 0 : SPAN_PLAYBACK_MARGIN_SECONDS))
+  void element.play().catch(() => {})
+  if (end === undefined)
+    return
+
+  // The check reads the audio position, not the wall clock, so a slow start or a slow audio clock stops on time.
+  const stopAt = end + SPAN_PLAYBACK_MARGIN_SECONDS
+  const check = () => {
+    if (request !== playRequest)
+      return
+    if (element.currentTime >= stopAt)
+      element.pause()
+    else if (!element.ended)
+      requestAnimationFrame(check)
+  }
+  requestAnimationFrame(check)
 }
 
 // Hotword boost
@@ -762,7 +792,10 @@ function compare() {
       </p>
       <template v-else>
         <div :class="['text-xs text-neutral-500 dark:text-neutral-400']">
-          Click the chart to play from that point. Span colors: amber is unstable, red is dropped, violet is untranscribed.
+          Click a span to play only that span, or elsewhere on the chart to play from that point. Span colors: amber is unstable, red is dropped, violet is untranscribed.
+          <template v-if="annotation.emissionDelay > 0">
+            The decoder emitted tokens about {{ annotation.emissionDelay.toFixed(2) }} s after their syllables, so token times are moved that much earlier.
+          </template>
         </div>
         <audio ref="player" :src="shownUrl" controls />
         <UncertaintyTimeline
@@ -771,11 +804,11 @@ function compare() {
           :tokens="annotation.analysis.tokens"
           :timeline="annotation.analysis.timeline"
           :spans="annotation.spans"
-          :probe-tokens="shown.probe?.tokens"
+          :probe-tokens="annotation.probe?.tokens"
           :agreement-threshold="analysisOptions.agreementThreshold"
-          @seek="play"
+          @play="play"
         />
-        <SpanList :spans="annotation.spans" :reference="shown.reference" @seek="play" />
+        <SpanList :spans="annotation.spans" :reference="shown.reference" @play="play" />
         <details :class="['text-sm']">
           <summary :class="['cursor-pointer font-medium']">
             Thresholds
@@ -880,7 +913,7 @@ function compare() {
           Uncertain spans of the boosted decode
         </summary>
         <div :class="['pt-2']">
-          <SpanList :spans="boostedAnnotation.spans" :reference="boosted.reference" @seek="play" />
+          <SpanList :spans="boostedAnnotation.spans" :reference="boosted.reference" @play="play" />
         </div>
       </details>
     </section>
