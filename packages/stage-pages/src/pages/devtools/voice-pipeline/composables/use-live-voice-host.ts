@@ -7,6 +7,8 @@ import { useVoiceListening } from '@proj-airi/stage-ui/composables/voice-input-m
 import { useVoiceResponseOutput } from '@proj-airi/stage-ui/composables/voice-response-output'
 import { getSpeechBusContext, voiceRequestSnapshot, voiceSnapshotChanged } from '@proj-airi/stage-ui/services/speech/bus'
 import { useAudioContext, useSpeakingStore } from '@proj-airi/stage-ui/stores/audio'
+import { listensContinuously, useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
+import { useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings/audio-device'
 import { useSpeechOutputControlStore } from '@proj-airi/stage-ui/stores/speech-output-control'
 import { computed, effectScope, onScopeDispose, ref, shallowRef, watch } from 'vue'
 
@@ -38,6 +40,8 @@ async function findOtherHost() {
   }
 }
 
+export type LiveVoiceHost = ReturnType<typeof useLiveVoiceHost>
+
 /**
  * Makes this page the voice host while it runs: the microphone listens as the Hearing input mode says, and replies
  * of the active chat play here.
@@ -52,6 +56,8 @@ export function useLiveVoiceHost() {
   const { audioContext } = useAudioContext()
   const speaking = useSpeakingStore()
   const speechOutputControl = useSpeechOutputControlStore()
+  const hearing = useHearingStore()
+  const devices = useSettingsAudioDevice()
 
   const scope = shallowRef<EffectScope>()
   const starting = ref(false)
@@ -130,5 +136,8 @@ export function useLiveVoiceHost() {
     stop()
   })
 
-  return { running: computed(() => !!scope.value), starting, error, start, stop }
+  /** The host listens to the microphone all the time, so it takes any speech that another recorder on the page hears as a turn. */
+  const takesSpeech = computed(() => !!scope.value && devices.enabled && listensContinuously(hearing.inputMode))
+
+  return { running: computed(() => !!scope.value), takesSpeech, starting, error, start, stop }
 }

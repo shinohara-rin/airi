@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type { IOSubsystem } from '@proj-airi/stage-shared'
 
+import type { LiveVoiceHost } from '../composables/use-live-voice-host'
+
 import { useVoicePushToTalk } from '@proj-airi/stage-ui/composables/voice-input-mode'
 import { getSpeechBusContext, voiceInputLevel } from '@proj-airi/stage-ui/services/speech/bus'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
 import { useIOTracerStore } from '@proj-airi/stage-ui/stores/devtools/io-tracer'
-import { listensContinuously, useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
+import { useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
 import { useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings/audio-device'
 import { useVoiceStore } from '@proj-airi/stage-ui/stores/voice'
 import { Button, Callout, FieldCheckbox, FieldInputFile, FieldSelect } from '@proj-airi/ui'
@@ -18,8 +20,12 @@ import IOTracerChart from '../../io-tracer/components/io-tracer-chart.vue'
 import { isSpokenTurn, voiceInputIdOf, voiceTurnLatency, voiceTurnTiming } from '../composables/turn-timing'
 import { useClipInput } from '../composables/use-clip-input'
 import { useClipReplay } from '../composables/use-clip-replay'
-import { useLiveVoiceHost } from '../composables/use-live-voice-host'
 import { useUtteranceAudio } from '../composables/use-utterance-audio'
+
+const { host } = defineProps<{
+  /** The page owns the host, because the offline lab must not record while the host takes speech. */
+  host: LiveVoiceHost
+}>()
 
 /** The voice pipeline runs at 16 kHz, so a replayed clip is converted to it once, when it loads. */
 const sampleRate = 16000
@@ -31,7 +37,6 @@ const sessions = useChatSessionStore()
 const { inputMode, autoSendEnabled } = storeToRefs(hearing)
 const { enabled: microphoneEnabled } = storeToRefs(devices)
 
-const host = useLiveVoiceHost()
 const pushToTalk = useVoicePushToTalk()
 const clip = useClipInput(sampleRate)
 const replay = useClipReplay()
@@ -42,9 +47,6 @@ useEventListener(document, 'visibilitychange', () => {
   if (document.visibilityState === 'hidden')
     pushToTalk.cancel('Page was hidden during the hold')
 })
-
-// A host that listens all the time would take the recorded speech as a live turn.
-const recordingBlocked = computed(() => host.running.value && microphoneEnabled.value && listensContinuously(inputMode.value))
 
 // Stopping the host cancels the input that a replay holds, so the replay stops with it and returns the microphone.
 function stopHost() {
@@ -214,12 +216,12 @@ function selectTurn(turnId: string) {
         </div>
         <div :class="['text-xs text-neutral-500 dark:text-neutral-400']">
           Records without echo cancellation, noise suppression, or gain control. Replay it to repeat the same turn.
-          <template v-if="recordingBlocked">
+          <template v-if="host.takesSpeech.value">
             Stop the voice host or turn off its microphone input first, because the host takes the recorded speech as a turn.
           </template>
         </div>
         <div>
-          <Button v-if="!clip.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="recordingBlocked" @click="clip.record" />
+          <Button v-if="!clip.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="host.takesSpeech.value" @click="clip.record" />
           <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="clip.stop" />
         </div>
       </div>
