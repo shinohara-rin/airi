@@ -194,6 +194,8 @@ function startProbe() {
 
 // The Live turns section shows the host. The offline microphone paths read it too.
 const host = useLiveVoiceHost()
+/** A starting host can take speech as soon as it runs, so the offline microphone waits for the start to end. */
+const hostClaimsMicrophone = computed(() => host.starting.value || host.takesSpeech.value)
 
 const liveSource = ref<'microphone' | 'clip'>('microphone')
 const liveSourceOptions = [
@@ -397,7 +399,7 @@ function compare() {
 
 <template>
   <div :class="['flex flex-col gap-8 pb-12']">
-    <LiveTurns :host="host" />
+    <LiveTurns :host="host" :microphone-busy="input.recording.value !== undefined || (listening && liveSource === 'microphone')" />
 
     <div :class="['flex flex-col gap-2 border-t border-neutral-200 pt-6 dark:border-neutral-700']">
       <h2 :class="['text-xl font-semibold']">
@@ -575,7 +577,7 @@ function compare() {
             </template>
           </div>
           <div>
-            <Button v-if="!input.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="listening || host.takesSpeech.value" @click="input.record" />
+            <Button v-if="!input.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="listening || hostClaimsMicrophone" @click="input.record" />
             <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="input.stop" />
           </div>
         </div>
@@ -671,7 +673,7 @@ function compare() {
             <Button
               v-if="!listening"
               variant="primary" color="primary" icon="i-solar:soundwave-bold-duotone" label="Start"
-              :disabled="!modelId || busy || boosting || input.recording.value !== undefined || (liveSource === 'clip' && !input.clip.value) || (liveSource === 'microphone' && host.takesSpeech.value)"
+              :disabled="!modelId || busy || boosting || input.recording.value !== undefined || (liveSource === 'clip' && !input.clip.value) || (liveSource === 'microphone' && hostClaimsMicrophone)"
               @click="startLive"
             />
             <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="live.stop()" />

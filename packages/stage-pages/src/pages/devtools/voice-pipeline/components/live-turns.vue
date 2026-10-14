@@ -22,9 +22,11 @@ import { useClipInput } from '../composables/use-clip-input'
 import { useClipReplay } from '../composables/use-clip-replay'
 import { useUtteranceAudio } from '../composables/use-utterance-audio'
 
-const { host } = defineProps<{
+const { host, microphoneBusy } = defineProps<{
   /** The page owns the host, because the offline lab must not record while the host takes speech. */
   host: LiveVoiceHost
+  /** The offline lab records from the microphone now. A host that starts then also takes that speech. */
+  microphoneBusy: boolean
 }>()
 
 /** The voice pipeline runs at 16 kHz, so a replayed clip is converted to it once, when it loads. */
@@ -145,10 +147,13 @@ function selectTurn(turnId: string) {
         variant="primary"
         icon="i-solar:play-bold"
         :label="host.starting.value ? 'Looking for another voice host...' : 'Start the voice host'"
-        :disabled="host.starting.value"
+        :disabled="host.starting.value || microphoneBusy || !!clip.recording.value"
         @click="host.start()"
       />
       <Button v-else icon="i-solar:stop-bold" label="Stop the voice host" @click="stopHost()" />
+      <span v-if="!host.running.value && (microphoneBusy || clip.recording.value)" :class="['text-sm text-neutral-500 dark:text-neutral-400']">
+        Stop the microphone recording first, because the host takes that speech as a turn too.
+      </span>
       <span v-if="host.running.value" :class="['text-sm text-neutral-500 dark:text-neutral-400']">
         This page listens and plays the replies now. Leaving the page stops the host.
       </span>
@@ -221,7 +226,7 @@ function selectTurn(turnId: string) {
           </template>
         </div>
         <div>
-          <Button v-if="!clip.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="host.takesSpeech.value" @click="clip.record" />
+          <Button v-if="!clip.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="host.starting.value || host.takesSpeech.value" @click="clip.record" />
           <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="clip.stop" />
         </div>
       </div>
