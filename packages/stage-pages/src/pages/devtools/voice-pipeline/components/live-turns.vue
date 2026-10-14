@@ -110,7 +110,8 @@ function selectTurn(turnId: string) {
         v-if="!host.running.value"
         variant="primary"
         icon="i-solar:play-bold"
-        label="Start the voice host"
+        :label="host.starting.value ? 'Looking for another voice host...' : 'Start the voice host'"
+        :disabled="host.starting.value"
         @click="host.start()"
       />
       <Button v-else icon="i-solar:stop-bold" label="Stop the voice host" @click="host.stop()" />

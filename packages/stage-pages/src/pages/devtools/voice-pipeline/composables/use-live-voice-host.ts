@@ -5,16 +5,46 @@ import { BrowserPlayback } from '@proj-airi/audio/browser'
 import { Playback } from '@proj-airi/pipelines-audio'
 import { useVoiceListening } from '@proj-airi/stage-ui/composables/voice-input-mode'
 import { useVoiceResponseOutput } from '@proj-airi/stage-ui/composables/voice-response-output'
+import { getSpeechBusContext, voiceRequestSnapshot, voiceSnapshotChanged } from '@proj-airi/stage-ui/services/speech/bus'
 import { useAudioContext, useSpeakingStore } from '@proj-airi/stage-ui/stores/audio'
 import { useSpeechOutputControlStore } from '@proj-airi/stage-ui/stores/speech-output-control'
 import { computed, effectScope, onScopeDispose, ref, shallowRef, watch } from 'vue'
+
+/**
+ * Time in which the voice host of another window answers a snapshot request.
+ * A busy or hidden window answered after about 900 ms in Chromium, so the wait is longer than that.
+ */
+const HOST_PROBE_MS = 1500
+
+/**
+ * Asks the speech bus for a voice host. The bus is a BroadcastChannel, which does not deliver a post to its own
+ * sender, so an answer comes from another window, for example the main window of the desktop app.
+ */
+async function findOtherHost() {
+  const bus = getSpeechBusContext()
+  const answer = Promise.withResolvers<boolean>()
+  const stopListening = bus.on(voiceSnapshotChanged, ({ body }) => {
+    if (body?.connected)
+      answer.resolve(true)
+  })
+  const timer = setTimeout(() => answer.resolve(false), HOST_PROBE_MS)
+  bus.emit(voiceRequestSnapshot, undefined)
+  try {
+    return await answer.promise
+  }
+  finally {
+    stopListening()
+    clearTimeout(timer)
+  }
+}
 
 /**
  * Makes this page the voice host while it runs: the microphone listens as the Hearing input mode says, and replies
  * of the active chat play here.
  *
  * The stage scene is the voice host on the main page. A route without the stage has no host, so this page starts one.
- * The host starts only on request, because a second window that listens too, as in the desktop app, answers twice.
+ * The host starts only on request, and not while another window is the voice host, because two listening hosts
+ * answer each turn twice.
  * Special tokens, such as emotions, are not played, because the page has no character.
  * Scope disposal stops the host.
  */
@@ -24,13 +54,27 @@ export function useLiveVoiceHost() {
   const speechOutputControl = useSpeechOutputControlStore()
 
   const scope = shallowRef<EffectScope>()
+  const starting = ref(false)
   const error = ref<string>()
 
-  function start() {
-    if (scope.value)
+  async function start() {
+    if (scope.value || starting.value)
       return
 
     error.value = undefined
+    // Browsers resume a suspended context only during a user gesture, so the reply can play later.
+    void audioContext.resume()
+    starting.value = true
+    try {
+      if (await findOtherHost()) {
+        error.value = 'Another window is the voice host, for example the main window of the desktop app. Both would answer each turn, so live turns run only where this page is the only host.'
+        return
+      }
+    }
+    finally {
+      starting.value = false
+    }
+
     const created = effectScope(true)
     try {
       created.run(() => {
@@ -55,7 +99,6 @@ export function useLiveVoiceHost() {
             if (playing === 0)
               speaking.nowSpeaking = false
           },
-          onResponseStart: () => audioContext.resume(),
         })
         useVoiceListening()
 
@@ -80,5 +123,5 @@ export function useLiveVoiceHost() {
 
   onScopeDispose(stop)
 
-  return { running: computed(() => !!scope.value), error, start, stop }
+  return { running: computed(() => !!scope.value), starting, error, start, stop }
 }
