@@ -43,4 +43,17 @@ describe('useIOTracerStore', () => {
     expect(store.turns.flatMap(turn => turn.spans)).toHaveLength(1)
     expect(store.rawSpanCount).toBe(1)
   })
+
+  it('records a span once when more turns than the limit end before the remote copies arrive', async () => {
+    setActivePinia(createPinia())
+    const store = useIOTracerStore()
+    store.startRecording()
+
+    for (let index = 0; index < 60; index++)
+      startSpan(IOSpanNames.SpeechRecognition, undefined, { [IOAttributes.Subsystem]: IOSubsystems.ASR }).end()
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    expect(store.rawSpanCount).toBe(60)
+    expect(store.turns).toHaveLength(50)
+  })
 })
