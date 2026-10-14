@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { HearingConfig, IconStatusItem, RippleGrid } from '@proj-airi/stage-ui/components'
+import { useModelAssetStatus } from '@proj-airi/stage-ui/composables/use-model-asset-status'
+import { formatBytes } from '@proj-airi/stage-ui/libs/inference'
+import { multilingualE5Model } from '@proj-airi/stage-ui/libs/voice/multilingual-e5-embedder'
 import { useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
 import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
 import { useWakeWordsStore } from '@proj-airi/stage-ui/stores/wake-words'
-import { FieldCheckbox, FieldCombobox, FieldInput, FieldRange, SettingsCard } from '@proj-airi/ui'
+import { FieldCheckbox, FieldCombobox, FieldInput, FieldRange, Progress, SettingsCard } from '@proj-airi/ui'
 import { storeToRefs } from 'pinia'
 import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -12,6 +15,13 @@ const { t } = useI18n()
 const hearingStore = useHearingStore()
 const { configured, autoSendEnabled, autoSendDelay, endJudgeEnabled, rephraseEnabled, rephraseProvider, rephraseModel, phoneticRerankEnabled } = storeToRefs(hearingStore)
 const wakeWords = useWakeWordsStore()
+
+const { models: modelAssets } = useModelAssetStatus()
+const rerankModel = computed(() => modelAssets.value.find(model => model.id === multilingualE5Model.id))
+const rerankModelPercent = computed(() => {
+  const progress = rerankModel.value?.progress
+  return progress?.total ? Math.min(100, Math.round(progress.loaded / progress.total * 100)) : undefined
+})
 
 const providersStore = useProviderStore()
 const { configuredChatProvidersMetadata } = storeToRefs(providersStore)
@@ -172,6 +182,26 @@ const pages = computed(() => [
             :label="t('settings.pages.modules.hearing.sections.section.phonetic-rerank.enabled')"
             :description="t('settings.pages.modules.hearing.sections.section.phonetic-rerank.enabled-description')"
           />
+          <div v-if="phoneticRerankEnabled && rerankModel?.state === 'downloading'" :class="['flex flex-col gap-2', 'w-full']">
+            <div :class="['flex justify-between gap-3', 'text-xs text-neutral-500']">
+              <span>{{ t('settings.pages.data.sections.model-downloads.term-suggestion-model') }}</span>
+              <span v-if="rerankModel.progress">
+                {{ formatBytes(rerankModel.progress.loaded) }}
+                <template v-if="rerankModel.progress.total">/ {{ formatBytes(rerankModel.progress.total) }}</template>
+              </span>
+            </div>
+            <Progress
+              :progress="rerankModelPercent ?? 0"
+              role="progressbar"
+              :aria-label="t('settings.pages.data.sections.model-downloads.term-suggestion-model')"
+              :aria-valuenow="rerankModelPercent"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            />
+          </div>
+          <p v-else-if="phoneticRerankEnabled && rerankModel?.state === 'error'" role="alert" :class="['m-0 text-xs', 'text-red-600 dark:text-red-400']">
+            {{ rerankModel.error }}
+          </p>
         </div>
       </SettingsCard>
     </div>
