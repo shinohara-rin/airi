@@ -64,11 +64,14 @@ function storedFromPack(pack: VocabularyPack): StoredVocabulary {
 export function useVocabularyEditor(sample: VocabularyPack, options: Parameters<typeof importVocabularyPack>[1]) {
   const stored = useLocalStorage<StoredVocabulary>('devtools/voice-pipeline/vocabulary', storedFromPack(sample))
 
+  /** The pack schema needs a source, so an empty one becomes `manual` for matching and export alike. */
+  const source = computed(() => stored.value.source.trim() || 'manual')
+
   const statuses = computed(() => stored.value.rows.map((row): VocabularyRowStatus => {
     if (!row.term.trim())
       return { error: 'Add a term.' }
     try {
-      const [entry] = importVocabularyPack({ source: stored.value.source || 'manual', entries: [entryFromRow(row)] }, options)
+      const [entry] = importVocabularyPack({ source: source.value, entries: [entryFromRow(row)] }, options)
       return entry ? { entry, derived: !row.pronunciations.trim() } : { error: 'No pronunciation. Add one, or a Chinese or English written form.' }
     }
     catch (error) {
@@ -94,14 +97,19 @@ export function useVocabularyEditor(sample: VocabularyPack, options: Parameters<
   const jsonError = shallowRef<string>()
 
   function openJson() {
-    json.value = JSON.stringify({ source: stored.value.source, entries: stored.value.rows.map(entryFromRow) }, null, 2)
+    json.value = JSON.stringify({ source: source.value, entries: stored.value.rows.map(entryFromRow) }, null, 2)
     jsonError.value = undefined
   }
 
   /** Replaces the rows with the pack in `json`. Returns false and keeps the rows when the pack is not valid. */
   function applyJson() {
     try {
-      stored.value = storedFromPack(parseVocabularyPack(JSON.parse(json.value)))
+      const pack = parseVocabularyPack(JSON.parse(json.value))
+      // The table separates written forms with commas, so a form with a comma cannot round-trip through it.
+      const withComma = pack.entries.find(entry => entry.writtenForms.some(form => form.includes(',')))
+      if (withComma)
+        throw new Error(`A written form of "${withComma.term}" contains a comma. The table uses commas to separate forms.`)
+      stored.value = storedFromPack(pack)
       jsonError.value = undefined
       return true
     }

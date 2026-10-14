@@ -467,7 +467,7 @@ function compare() {
         or write tokens separated by spaces, with <code>;</code> between alternatives.
       </p>
       <div :class="['flex flex-wrap items-center gap-2']">
-        <Input v-model="vocabularyEditor.stored.value.source" size="sm" placeholder="Source" :class="['max-w-48']" />
+        <Input v-model="vocabularyEditor.stored.value.source" size="sm" placeholder="Source (manual)" :class="['max-w-48']" />
         <Button v-if="!editingJson" label="Add term" icon="i-solar:add-circle-bold-duotone" variant="primary" size="sm" @click="vocabularyEditor.add()" />
         <Button v-if="!editingJson" label="Edit as JSON" size="sm" @click="vocabularyEditor.openJson(); editingJson = true" />
         <Button v-else label="Apply JSON" variant="primary" size="sm" @click="editingJson = !vocabularyEditor.applyJson()" />
