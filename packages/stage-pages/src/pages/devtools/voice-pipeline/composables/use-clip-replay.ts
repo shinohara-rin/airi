@@ -6,7 +6,7 @@ import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-sto
 import { listensContinuously, startsInputOnSpeech, useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
 import { useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings/audio-device'
 import { useVoiceStore } from '@proj-airi/stage-ui/stores/voice'
-import { markRaw, onScopeDispose, ref, shallowRef } from 'vue'
+import { markRaw, onScopeDispose, ref, shallowRef, watch } from 'vue'
 
 import { createReplaySource } from './replay-source'
 
@@ -28,6 +28,7 @@ const HISTORY_MS = 360
  *   A wake word reads its own microphone input, so a replayed clip cannot wake.
  *
  * The microphone returns when every input that the clip started has settled, so a turn is not cancelled early.
+ * A change of the microphone setting, also from another window, puts the microphone back at once, so it stops the replay.
  * Scope disposal stops a replay that is still running.
  */
 export function useClipReplay() {
@@ -50,6 +51,12 @@ export function useClipReplay() {
     const stopObserving = voice.controller.onInput(attempt => settled.push(attempt.done))
     const detectsSpeech = startsInputOnSpeech(hearing.inputMode)
     const stopped = new Promise<void>(resolve => run.signal.addEventListener('abort', () => resolve(), { once: true }))
+
+    // The voice controller replaces its audio with each new microphone input, which ends the replay input.
+    const stopDeviceWatch = watch(() => devices.input, () => {
+      error.value = 'The microphone setting changed, so the replay stopped.'
+      run.abort('Microphone changed')
+    }, { flush: 'sync' })
 
     try {
       // Replacing the audio cancels a microphone input that runs now. Its frames belong to the microphone.
@@ -84,6 +91,7 @@ export function useClipReplay() {
       error.value = errorMessageFrom(cause) ?? 'The replay failed.'
     }
     finally {
+      stopDeviceWatch()
       stopObserving()
       voice.controller.replaceAudio(devices.input)
       if (detectsSpeech && (!devices.enabled || !listensContinuously(hearing.inputMode)))
