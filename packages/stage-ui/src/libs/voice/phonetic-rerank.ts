@@ -65,6 +65,22 @@ function overlapGroups(candidates: readonly PhoneticCandidate[]) {
   return groups
 }
 
+/**
+ * Joins the history newest message first, in at most `limit` characters.
+ * A message that does not fit keeps its end, because a long message usually ends on its newest topic.
+ */
+function recentHistory(messages: readonly string[], limit: number) {
+  const kept: string[] = []
+  let remaining = limit
+  for (const message of [...messages].reverse()) {
+    if (remaining <= 0)
+      break
+    kept.push(message.slice(-remaining))
+    remaining -= message.length + 1
+  }
+  return kept.join('\n')
+}
+
 function dot(a: readonly number[], b: readonly number[]) {
   let sum = 0
   for (let i = 0; i < a.length; i++)
@@ -104,7 +120,7 @@ export function createSemanticReranker(options: Pick<SemanticRerankOptions, 'emb
   }
 
   async function score({ text, candidates, sessionId }: PhoneticRerankRequest, signal: AbortSignal) {
-    const context = [...history(sessionId)].reverse().join('\n').slice(0, historyChars)
+    const context = recentHistory(history(sessionId), historyChars)
     const queries = new Map<PhoneticCandidate, Promise<readonly number[]>>()
     for (const group of overlapGroups(candidates)) {
       const masked = `${text.slice(0, group.start)}${MASK}${text.slice(group.end)}`

@@ -97,6 +97,15 @@ describe('createSemanticReranker', () => {
     expect(embedder.queries).toEqual(['I am doing the ___ now\nnew topic'])
   })
 
+  it('keeps the end of a newest message that is longer than the cap', async () => {
+    const embedder = createFakeEmbedder()
+    const rerank = createSemanticReranker({ embedder, history: () => ['older message', 'a long start, then the new topic'], historyChars: 13 })
+
+    await rerank({ text, candidates, sessionId: 'alice' }, new AbortController().signal)
+
+    expect(embedder.queries).toEqual(['I am doing the ___ now\nthe new topic'])
+  })
+
   it('embeds each passage once across inputs', async () => {
     const embedder = createFakeEmbedder()
     const rerank = createSemanticReranker({ embedder, history: () => [] })
