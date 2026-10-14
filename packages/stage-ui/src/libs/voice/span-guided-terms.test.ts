@@ -75,6 +75,18 @@ describe('matchUncertainSpans', () => {
     expect(matchUncertainSpans(part, [{ kind: 'unstable', tokenStart: 3, tokenEnd: 4, variants: [{ text: 'STAND', count: 4 }] }], entries, [english])).toEqual([])
   })
 
+  it('reads written forms as whole English words', () => {
+    const entries = phraseEntries(['React'], pronounce, { source: 'conversation', description: '' })
+    const heardReactor = locateTokens(['▁I', '▁use', '▁Reactor', '▁daily'])
+    const heardRactor = locateTokens(['▁I', '▁use', '▁Ractor', '▁daily'])
+
+    const [candidate] = matchUncertainSpans(heardReactor, [{ kind: 'unstable', tokenStart: 2, tokenEnd: 3, variants: [{ text: 'React', count: 4 }] }], entries, [english])
+    expect([candidate.span, candidate.score]).toEqual(['Reactor', 1])
+
+    const fromLongerWord = matchUncertainSpans(heardRactor, [{ kind: 'unstable', tokenStart: 2, tokenEnd: 3, variants: [{ text: 'Reactor', count: 4 }] }], entries, [english])
+    expect(fromLongerWord.filter(found => found.score === 1)).toEqual([])
+  })
+
   it('places a candidate of a dropped span at its insert position', () => {
     const transcript = locateTokens([...'我遇到了一只'])
     const dropped: UncertainSpan = { kind: 'dropped', tokenStart: 6, tokenEnd: 6, variants: [{ text: '硫方怪', count: 3 }] }

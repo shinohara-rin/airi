@@ -54,6 +54,19 @@ function needsSpace(left: string | undefined, right: string | undefined) {
 }
 
 /**
+ * Finds a written form in text, ignoring case. An English form must be a whole word, so `react` is not found in
+ * `reactor`. CJK text has no word boundaries, so a CJK form can start anywhere.
+ */
+function findForm(folded: string, form: string): number[] {
+  const found: number[] = []
+  for (let at = folded.indexOf(form); at >= 0; at = folded.indexOf(form, at + 1)) {
+    if (!needsSpace(folded[at - 1], form[0]) && !needsSpace(form.at(-1), folded[at + form.length]))
+      found.push(at)
+  }
+  return found
+}
+
+/**
  * Puts the heard text between the transcript text around the span.
  *
  * A variant that replaces span text keeps the transcript's boundaries: a span can cover only part of a word, for
@@ -113,7 +126,7 @@ export function matchUncertainSpans(
     // A variant can differ from the transcript only in case, for example `ZUSTAND` for `Zustand`. The transcript
     // already spells the term there, so there is nothing to boost or suggest.
     const spelled = candidate.span.toLowerCase()
-    if (formsOf.get(candidate.term)?.some(form => spelled.includes(form)))
+    if (formsOf.get(candidate.term)?.some(form => findForm(spelled, form).length))
       return
     const key = `${candidate.spanIndex}:${candidate.term}`
     const kept = best.get(key)
@@ -151,7 +164,7 @@ export function matchUncertainSpans(
         const folded = window.text.toLowerCase()
         for (const entry of entries) {
           for (const form of entry.writtenForms.map(written => written.toLowerCase())) {
-            for (let at = folded.indexOf(form); at >= 0; at = folded.indexOf(form, at + 1)) {
+            for (const at of findForm(folded, form)) {
               if (at + form.length <= window.middleStart || at >= window.middleEnd)
                 continue
               const start = toTranscript(window, at, 'start')
