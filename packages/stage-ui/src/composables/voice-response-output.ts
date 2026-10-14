@@ -15,9 +15,10 @@ export interface VoiceResponseOutputOptions {
   readonly playback: SpeechOutput['playback']
   /**
    * Plays a special token, for example a delay or an emotion.
-   * Speech calls it in order with the audio. While speech is muted, the chat stream calls it directly.
+   * Speech calls it in order with the audio. While speech is muted, the chat stream calls it directly and waits
+   * for it, so the next tokens and the response end run after it.
    */
-  readonly onSpecial: (special: string, turn: TurnRef) => void
+  readonly onSpecial: (special: string, turn: TurnRef) => void | Promise<void>
   readonly onPlaybackStart?: (clip: { text: string }, turn: TurnRef) => void
   readonly onPlaybackEnd?: () => void
   /** Runs after the voice store opens the response speech of a new assistant message. */
@@ -48,7 +49,7 @@ export function useVoiceResponseOutput(options: VoiceResponseOutputOptions) {
   const disconnectOutput = voice.connectOutput((turn) => {
     const output = {
       playback: options.playback,
-      onSpecial: (special: string) => options.onSpecial(special, turn),
+      onSpecial: (special: string) => void options.onSpecial(special, turn),
       onPlaybackStart: (clip: { text: string }) => options.onPlaybackStart?.(clip, turn),
       onPlaybackEnd: () => options.onPlaybackEnd?.(),
     }
@@ -89,7 +90,7 @@ export function useVoiceResponseOutput(options: VoiceResponseOutputOptions) {
     }),
     onTokenSpecial(async (special, context) => {
       if (speechMuted.value)
-        options.onSpecial(special, context)
+        await options.onSpecial(special, context)
       else
         voice.getSpeech(context)?.special(special)
     }),

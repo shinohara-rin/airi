@@ -390,7 +390,7 @@ watch(() => voice.activeTurns, (turns) => {
 const disconnectVoiceOutput = useVoiceResponseOutput({
   audioContext,
   playback,
-  onSpecial: (special, turn) => void playSpecialToken(special, { turnId: turn.turnId }),
+  onSpecial: (special, turn) => playSpecialToken(special, { turnId: turn.turnId }),
   onPlaybackStart: ({ text }) => {
     playingCount += 1
     nowSpeaking.value = true
