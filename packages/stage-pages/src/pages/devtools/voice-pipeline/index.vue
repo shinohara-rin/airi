@@ -33,6 +33,7 @@ import { useObjectUrl } from '@vueuse/core'
 import { computed, reactive, ref, shallowRef, useTemplateRef, watch } from 'vue'
 
 import DecodeDetails from './components/decode-details.vue'
+import LiveTurns from './components/live-turns.vue'
 import SpanList from './components/span-list.vue'
 import SuggestionList from './components/suggestion-list.vue'
 import UncertaintyTimeline from './components/uncertainty-timeline.vue'
@@ -392,6 +393,17 @@ function compare() {
 
 <template>
   <div :class="['flex flex-col gap-8 pb-12']">
+    <LiveTurns />
+
+    <div :class="['flex flex-col gap-2 border-t border-neutral-200 pt-6 dark:border-neutral-700']">
+      <h2 :class="['text-xl font-semibold']">
+        Offline lab
+      </h2>
+      <p :class="['text-sm text-neutral-500 dark:text-neutral-400']">
+        Tests the input steps on one clip, outside the live pipeline. Nothing here goes to a chat.
+      </p>
+    </div>
+
     <Callout label="The voice input pipeline">
       <p>
         Conversation terms become hotwords. The probe decodes the speech many times with noise and finds the spans that recognition is unsure of.
@@ -401,9 +413,9 @@ function compare() {
     </Callout>
 
     <section :class="['flex flex-col gap-4']">
-      <h2 :class="['text-lg font-semibold']">
+      <h3 :class="['text-lg font-semibold']">
         1. Conversation terms
-      </h2>
+      </h3>
       <FieldSelect v-model="conversation.source.value" label="Source" :options="sourceOptions" />
       <template v-if="conversation.source.value === 'session'">
         <FieldSelect v-model="conversation.selectedSessionId.value" label="Chat" :options="conversation.sessionOptions.value" placeholder="Select a chat" />
@@ -458,9 +470,9 @@ function compare() {
     </section>
 
     <section :class="['flex flex-col gap-2']">
-      <h2 :class="['text-lg font-semibold']">
+      <h3 :class="['text-lg font-semibold']">
         2. Domain vocabulary
-      </h2>
+      </h3>
       <p :class="['text-sm text-neutral-500 dark:text-neutral-400']">
         Domain terms go only to post-ASR matching, never to recognition as hotwords, unless step 5 allows it.
         Separate written forms with commas. Leave the pronunciation empty to derive it from a Chinese or English written form,
@@ -543,9 +555,9 @@ function compare() {
     </section>
 
     <section :class="['flex flex-col gap-4']">
-      <h2 :class="['text-lg font-semibold']">
+      <h3 :class="['text-lg font-semibold']">
         3. Recognition
-      </h2>
+      </h3>
       <div :class="['grid gap-4 md:grid-cols-2']">
         <FieldInputFile v-model="input.files.value" label="Audio file" description="Any format the browser can decode. It is converted to 16 kHz mono." accept="audio/*" />
         <div :class="['flex flex-col gap-2']">
@@ -720,9 +732,9 @@ function compare() {
     </section>
 
     <section :class="['flex flex-col gap-4']">
-      <h2 :class="['text-lg font-semibold']">
+      <h3 :class="['text-lg font-semibold']">
         4. Uncertainty
-      </h2>
+      </h3>
       <p v-if="!shown || !annotation" :class="['text-sm text-neutral-500']">
         Probe a clip or select a live utterance.
       </p>
@@ -761,9 +773,9 @@ function compare() {
     </section>
 
     <section :class="['flex flex-col gap-4']">
-      <h2 :class="['text-lg font-semibold']">
+      <h3 :class="['text-lg font-semibold']">
         5. Hotword boost
-      </h2>
+      </h3>
       <div :class="['text-xs text-neutral-500 dark:text-neutral-400']">
         Each conversation term is matched by sound against what the decodes heard in each uncertain span, the transcript text and the variants.
         A matched term gets the boost score, and the clip is decoded again with the new list.
@@ -852,9 +864,9 @@ function compare() {
     </section>
 
     <section :class="['flex flex-col gap-4']">
-      <h2 :class="['text-lg font-semibold']">
+      <h3 :class="['text-lg font-semibold']">
         6. Post-ASR suggestions
-      </h2>
+      </h3>
       <div :class="['grid gap-4 md:grid-cols-2']">
         <FieldSelect v-model="post.source" label="Transcript" :options="postSourceOptions" />
         <FieldSelect v-model="post.scope" label="Uncertainty" :options="scopeOptions" />
@@ -913,9 +925,9 @@ function compare() {
     </section>
 
     <section :class="['flex flex-col gap-2']">
-      <h2 :class="['text-lg font-semibold']">
+      <h3 :class="['text-lg font-semibold']">
         7. What the chat model reads
-      </h2>
+      </h3>
       <div :class="['text-xs text-neutral-500 dark:text-neutral-400']">
         The transcript with the uncertain spans marked, and the suggestions as submission context.
       </div>
