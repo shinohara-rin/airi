@@ -53,9 +53,16 @@ function needsSpace(left: string | undefined, right: string | undefined) {
   return left !== undefined && right !== undefined && /[a-z0-9]/i.test(left) && /[a-z0-9]/i.test(right)
 }
 
-function heardWindow(before: string, middle: string, after: string): HeardWindow {
-  const left = needsSpace(before.at(-1), middle[0]) ? ' ' : ''
-  const right = needsSpace(middle.at(-1), after[0]) ? ' ' : ''
+/**
+ * Puts the heard text between the transcript text around the span.
+ *
+ * A variant that replaces span text keeps the transcript's boundaries: a span can cover only part of a word, for
+ * example `STAN` of `ZUSTAN`, and a space there would split the word for the English tokenizer. Text heard at an
+ * insert position is a new word, so it gets a space next to English words.
+ */
+function heardWindow(before: string, middle: string, after: string, inserted: boolean): HeardWindow {
+  const left = inserted && needsSpace(before.at(-1), middle[0]) ? ' ' : ''
+  const right = inserted && needsSpace(middle.at(-1), after[0]) ? ' ' : ''
   const middleStart = before.length + left.length
   const middleEnd = middleStart + middle.length
   return { text: `${before}${left}${middle}${right}${after}`, middleStart, middleEnd, afterStart: middleEnd + right.length }
@@ -130,16 +137,24 @@ export function matchUncertainSpans(
     ]
     for (const { heard, count } of heardTexts) {
       const base = { spanIndex, kind: span.kind, heard, heardCount: count }
-      // The transcript already has the span text, so only a variant can spell a term that the transcript misses.
+      const window = heardWindow(before, heard, after, spanStart === spanEnd)
+      // The matcher skips text that already spells a term. A variant can complete the spelling with its neighbors,
+      // for example `STAND` after `ZU`, so a written form that touches the variant is a match with score 1.
       if (count !== undefined) {
-        const folded = heard.toLowerCase()
+        const folded = window.text.toLowerCase()
         for (const entry of entries) {
-          if (entry.writtenForms.some(form => folded.includes(form.toLowerCase())) && !entry.writtenForms.some(form => spanText.toLowerCase().includes(form.toLowerCase())))
-            keep({ ...base, span: spanText, candidate: entry.writtenForms[0] ?? entry.term, term: entry.term, score: 1, source: entry.source, description: entry.description, start: spanStart, end: spanEnd })
+          for (const form of entry.writtenForms.map(written => written.toLowerCase())) {
+            for (let at = folded.indexOf(form); at >= 0; at = folded.indexOf(form, at + 1)) {
+              if (at + form.length <= window.middleStart || at >= window.middleEnd)
+                continue
+              const start = toTranscript(window, at, 'start')
+              const end = toTranscript(window, at + form.length, 'end')
+              keep({ ...base, span: text.slice(start, end), candidate: entry.writtenForms[0] ?? entry.term, term: entry.term, score: 1, source: entry.source, description: entry.description, start, end })
+            }
+          }
         }
       }
 
-      const window = heardWindow(before, heard, after)
       for (const found of match(window.text)) {
         if (found.end <= window.middleStart || found.start >= window.middleEnd)
           continue
@@ -257,7 +272,7 @@ function overlaps(a: { readonly start: number, readonly end: number }, b: { read
 /**
  * Merges the whole-transcript candidates with the span candidates and orders them by `scope`.
  *
- * A whole-transcript candidate that touches a span gets that span as backing. A term with candidates from both
+ * A whole-transcript candidate that overlaps a span, or contains its insert position, gets that span as backing. A term with candidates from both
  * sources over the same text keeps the higher score and the backing.
  */
 export function guideCandidates(
@@ -275,7 +290,9 @@ export function guideCandidates(
     return { start, end }
   })
   const merged: GuidedCandidate[] = whole.map((candidate) => {
-    const spanIndex = ranges.findIndex(range => overlaps(candidate, range))
+    // An insert position backs a candidate only from inside it. A word that ends where speech was dropped is not
+    // the dropped speech. Span matching already reads such a word together with the dropped variants.
+    const spanIndex = ranges.findIndex(range => range.start === range.end ? candidate.start < range.start && range.start < candidate.end : overlaps(candidate, range))
     if (spanIndex < 0)
       return candidate
     const { start, end } = ranges[spanIndex]

@@ -282,17 +282,35 @@ const boosts = computed(() => {
 })
 const boostedCount = computed(() => boosts.value.filter(item => item.match).length)
 
-/** The result that the boosted decode started from. Its result belongs to that result only. */
-const boostedFrom = shallowRef<ProbeResult>()
+/**
+ * The settings of a boosted decode, as one comparable key: the model, the run settings, and the scored hotwords.
+ * A boosted result counts only while the current settings give the same key, so an edit never leaves an old decode on show.
+ */
+function boostKey(settings: ProbeRunSettings | undefined) {
+  if (!settings)
+    return undefined
+  const { model, ...rest } = settings
+  return JSON.stringify({ model: model.id, ...rest })
+}
+const boostSettings = computed(() => runSettings(boosts.value.map(({ phrase, score }) => ({ phrase, score }))))
+
+/** The result and the settings key that the boosted decode started from. Its result belongs to them only. */
+const boostedFrom = shallowRef<{ source: ProbeResult, key: string }>()
 function startBoost() {
   const source = shown.value
-  const settings = runSettings(boosts.value.map(({ phrase, score }) => ({ phrase, score })))
-  if (!source || !settings)
+  const settings = boostSettings.value
+  const key = boostKey(settings)
+  if (!source || !settings || !key)
     return
-  boostedFrom.value = source
+  boostedFrom.value = { source, key }
   void boostProbe.run(source.clip, settings)
 }
-const boosted = computed(() => boostedFrom.value === shown.value && boostProbe.status.value === 'done' ? boostProbe.result.value : undefined)
+const boosted = computed(() => {
+  const from = boostedFrom.value
+  if (!from || from.source !== shown.value || from.key !== boostKey(boostSettings.value) || boostProbe.status.value !== 'done')
+    return undefined
+  return boostProbe.result.value
+})
 const boostedAnnotation = computed(() => boosted.value ? annotate(boosted.value) : undefined)
 
 // Post-ASR suggestions

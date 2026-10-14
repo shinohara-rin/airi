@@ -54,6 +54,18 @@ describe('matchUncertainSpans', () => {
     expect(candidate.heard).toBe('Zustand')
   })
 
+  it('keeps a word whole when the span covers only part of it', () => {
+    const transcript = locateTokens(['▁I', '▁use', '▁ZU', 'STAN', '▁daily'])
+    const span: UncertainSpan = { kind: 'unstable', tokenStart: 3, tokenEnd: 4, variants: [{ text: 'STAND', count: 4 }] }
+    const entries = phraseEntries(['Zustand'], pronounce, { source: 'conversation', description: '' })
+
+    const [candidate] = matchUncertainSpans(transcript, [span], entries, [english])
+
+    expect(candidate.heard).toBe('STAND')
+    expect(candidate.score).toBe(1)
+    expect(candidate.span).toBe('ZUSTAN')
+  })
+
   it('places a candidate of a dropped span at its insert position', () => {
     const transcript = locateTokens([...'我遇到了一只'])
     const dropped: UncertainSpan = { kind: 'dropped', tokenStart: 6, tokenEnd: 6, variants: [{ text: '硫方怪', count: 3 }] }
@@ -111,6 +123,12 @@ describe('guideCandidates', () => {
 
   it('drops the matches outside the spans with the only scope', () => {
     expect(guideCandidates(whole(), inSpans(), transcript, [span], 'only').map(candidate => candidate.candidate)).toEqual(['硫方怪'])
+  })
+
+  it('does not back a word that only ends where speech was dropped', () => {
+    const dropped: UncertainSpan = { kind: 'dropped', tokenStart: 5, tokenEnd: 5, variants: [] }
+
+    expect(guideCandidates(whole(), [], transcript, [dropped], 'only')).toEqual([])
   })
 
   it('keeps the plain phonetic order with uncertainty off', () => {
