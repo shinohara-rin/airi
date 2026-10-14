@@ -99,8 +99,18 @@ export function useLiveVoiceHost() {
 
   onScopeDispose(stop)
 
-  /** The host listens to the microphone all the time, so it takes any speech that another recorder on the page hears as a turn. */
-  const takesSpeech = computed(() => !!scope.value && devices.enabled && listensContinuously(hearing.inputMode))
+  /**
+   * Why a diagnostic recording on the page cannot start now, or nothing.
+   * A host that listens all the time takes any speech that the recording hears as a turn: this page's host, or the host of
+   * another window that holds the listening lease. A recording claims the lease itself, so the main window host stops.
+   */
+  const recordingBlocked = computed(() => {
+    if (scope.value && devices.enabled && listensContinuously(hearing.inputMode))
+      return 'Stop the voice host or turn off its microphone input first, because the host takes this speech as a turn.'
+    if (leasedElsewhere.value)
+      return 'Another window runs its own voice host, for example a second devtool window. Stop it first, because it takes this speech as a turn.'
+    return undefined
+  })
 
-  return { running: computed(() => !!scope.value), takesSpeech, error, start, stop }
+  return { running: computed(() => !!scope.value), recordingBlocked, error, start, stop }
 }

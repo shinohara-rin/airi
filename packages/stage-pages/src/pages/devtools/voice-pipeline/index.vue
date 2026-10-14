@@ -621,12 +621,12 @@ function compare() {
           </div>
           <div :class="['text-xs text-neutral-500 dark:text-neutral-400']">
             Records without echo cancellation, noise suppression, or gain control, so the probe sees the raw input.
-            <template v-if="host.takesSpeech.value">
-              Stop the voice host above or turn off its microphone input first, because the host takes the recorded speech as a turn.
+            <template v-if="host.recordingBlocked.value">
+              {{ host.recordingBlocked.value }}
             </template>
           </div>
           <div>
-            <Button v-if="!input.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="listening || host.takesSpeech.value" @click="input.record" />
+            <Button v-if="!input.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="listening || !!host.recordingBlocked.value" @click="input.record" />
             <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="input.stop" />
           </div>
         </div>
@@ -716,14 +716,14 @@ function compare() {
             Live mode adds noise only. Select an utterance to send it through the later steps.
           </div>
           <FieldSelect v-model="liveSource" label="Input" :options="liveSourceOptions" :disabled="listening" />
-          <p v-if="liveSource === 'microphone' && host.takesSpeech.value" :class="['text-xs text-amber-600 dark:text-amber-400']">
-            Stop the voice host above or turn off its microphone input first, because the host takes this speech as a turn.
+          <p v-if="liveSource === 'microphone' && host.recordingBlocked.value" :class="['text-xs text-amber-600 dark:text-amber-400']">
+            {{ host.recordingBlocked.value }}
           </p>
           <div :class="['flex flex-wrap items-center gap-4']">
             <Button
               v-if="!listening"
               variant="primary" color="primary" icon="i-solar:soundwave-bold-duotone" label="Start"
-              :disabled="!modelId || busy || boosting || input.recording.value !== undefined || (liveSource === 'clip' && !input.clip.value) || (liveSource === 'microphone' && host.takesSpeech.value)"
+              :disabled="!modelId || busy || boosting || input.recording.value !== undefined || (liveSource === 'clip' && !input.clip.value) || (liveSource === 'microphone' && !!host.recordingBlocked.value)"
               @click="startLive"
             />
             <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="live.stop()" />

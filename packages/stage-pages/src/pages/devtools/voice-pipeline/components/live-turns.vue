@@ -250,12 +250,12 @@ function selectTurn(turnId: string) {
         </div>
         <div :class="['text-xs text-neutral-500 dark:text-neutral-400']">
           Records without echo cancellation, noise suppression, or gain control. Replay it to repeat the same turn.
-          <template v-if="host.takesSpeech.value">
-            Stop the voice host or turn off its microphone input first, because the host takes the recorded speech as a turn.
+          <template v-if="host.recordingBlocked.value">
+            {{ host.recordingBlocked.value }}
           </template>
         </div>
         <div>
-          <Button v-if="!clip.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="host.takesSpeech.value" @click="clip.record" />
+          <Button v-if="!clip.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="!!host.recordingBlocked.value" @click="clip.record" />
           <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="clip.stop" />
         </div>
       </div>
