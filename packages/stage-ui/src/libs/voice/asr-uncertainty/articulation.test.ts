@@ -112,6 +112,14 @@ describe('estimateEmissionDelay', () => {
     expect(estimateEmissionDelay({ nuclei }, { tokens: nuclei.map((time, index) => ({ text: `t${index}`, time })) })).toBe(0)
   })
 
+  // Codex review on PR #30: with nearest-nucleus matching, each late token matched the nucleus of a later syllable.
+  it('finds the delay of evenly spaced syllables, where late tokens sit on later nuclei', () => {
+    const even = [0.2, 0.4, 0.6, 0.8, 1]
+    const tokens = even.map((time, index) => ({ text: `t${index}`, time: time + 0.4 }))
+
+    expect(estimateEmissionDelay({ nuclei: even }, { tokens })).toBeCloseTo(0.4)
+  })
+
   it('finds no delay without enough evidence', () => {
     expect(estimateEmissionDelay({ nuclei: [1, 2] }, reference)).toBe(0)
     expect(estimateEmissionDelay({ nuclei }, { tokens: reference.tokens.slice(0, 2) })).toBe(0)
