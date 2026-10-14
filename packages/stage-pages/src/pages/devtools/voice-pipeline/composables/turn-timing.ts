@@ -39,6 +39,12 @@ export function isSpokenTurn(turn: IOTurn) {
   return turn.spans.some(span => span.subsystem === IOSubsystems.VoiceInput)
 }
 
+/** Reads the speech input ID of a spoken turn from its voice input span. */
+export function voiceInputIdOf(turn: IOTurn) {
+  const id = turn.spans.find(span => span.name === IOSpanNames.VoiceInput)?.meta.id
+  return typeof id === 'string' ? id : undefined
+}
+
 /** Reads the moments of a turn from the spans that the IO tracer recorded for it. */
 export function voiceTurnTiming(turn: IOTurn): VoiceTurnTiming {
   const ended = (subsystem: string) => turn.spans.filter(span => span.subsystem === subsystem && span.endTs !== undefined).map(span => span.endTs!)

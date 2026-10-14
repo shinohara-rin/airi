@@ -3,7 +3,7 @@ import type { IOSpan, IOTurn } from '@proj-airi/stage-shared'
 import { IOSpanNames, IOSubsystems } from '@proj-airi/stage-shared'
 import { describe, expect, it } from 'vitest'
 
-import { isSpokenTurn, voiceTurnLatency, voiceTurnTiming } from './turn-timing'
+import { isSpokenTurn, voiceInputIdOf, voiceTurnLatency, voiceTurnTiming } from './turn-timing'
 
 function span(fields: Pick<IOSpan, 'subsystem' | 'name' | 'startTs'> & Partial<IOSpan>): IOSpan {
   return { id: `${fields.name}-${fields.startTs}`, traceId: 'trace', meta: {}, ...fields }
@@ -17,7 +17,7 @@ const spoken: IOTurn = {
     span({ subsystem: IOSubsystems.VAD, name: IOSpanNames.VoiceActivityDetection, startTs: 1100, endTs: 1500 }),
     span({ subsystem: IOSubsystems.VAD, name: IOSpanNames.VoiceActivityDetection, startTs: 1800, endTs: 2400 }),
     span({ subsystem: IOSubsystems.ASR, name: IOSpanNames.SpeechRecognition, startTs: 1100, endTs: 2700 }),
-    span({ subsystem: IOSubsystems.VoiceInput, name: IOSpanNames.VoiceInput, startTs: 1000, endTs: 2800, meta: { outcome: 'committed' } }),
+    span({ subsystem: IOSubsystems.VoiceInput, name: IOSpanNames.VoiceInput, startTs: 1000, endTs: 2800, meta: { outcome: 'committed', id: 'input-1' } }),
     span({ subsystem: IOSubsystems.LLM, name: IOSpanNames.LLMInference, startTs: 2900, endTs: 4000, meta: { firstTokenTs: 3300 } }),
     span({ subsystem: IOSubsystems.Playback, name: IOSpanNames.AudioPlayback, startTs: 4100, endTs: 5000 }),
     span({ subsystem: IOSubsystems.Playback, name: IOSpanNames.AudioPlayback, startTs: 3900, endTs: 4100 }),
@@ -44,5 +44,12 @@ describe('voiceTurnTiming', () => {
     const typed: IOTurn = { id: 'trace', startTs: 2900, spans: spoken.spans.slice(4) }
 
     expect(voiceTurnLatency(voiceTurnTiming(typed))).toEqual({})
+  })
+})
+
+describe('voiceInputIdOf', () => {
+  it('reads the speech input of a spoken turn, and nothing for a typed turn', () => {
+    expect(voiceInputIdOf(spoken)).toBe('input-1')
+    expect(voiceInputIdOf({ id: 'trace', startTs: 2900, spans: spoken.spans.slice(4) })).toBeUndefined()
   })
 })

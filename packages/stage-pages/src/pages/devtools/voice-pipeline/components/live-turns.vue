@@ -15,10 +15,11 @@ import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 
 import IOTracerChart from '../../io-tracer/components/io-tracer-chart.vue'
 
-import { isSpokenTurn, voiceTurnLatency, voiceTurnTiming } from '../composables/turn-timing'
+import { isSpokenTurn, voiceInputIdOf, voiceTurnLatency, voiceTurnTiming } from '../composables/turn-timing'
 import { useClipInput } from '../composables/use-clip-input'
 import { useClipReplay } from '../composables/use-clip-replay'
 import { useLiveVoiceHost } from '../composables/use-live-voice-host'
+import { useUtteranceAudio } from '../composables/use-utterance-audio'
 
 /** The voice pipeline runs at 16 kHz, so a replayed clip is converted to it once, when it loads. */
 const sampleRate = 16000
@@ -108,9 +109,21 @@ function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString()
 }
 
+const utterances = useUtteranceAudio()
+
+/** Selects a span. A span of a spoken turn also plays the utterance of that turn. */
+function selectSpan(spanId: string | null) {
+  tracer.selectSpan(spanId)
+  utterances.stop()
+  const turn = spanId ? turns.value.find(candidate => candidate.spans.some(span => span.id === spanId)) : undefined
+  const inputId = turn && voiceInputIdOf(turn)
+  if (inputId)
+    utterances.play(inputId)
+}
+
 function selectTurn(turnId: string) {
   const turn = turns.value.find(candidate => candidate.id === turnId)
-  tracer.selectSpan(turn?.spans[0]?.id ?? null)
+  selectSpan(turn?.spans[0]?.id ?? null)
 }
 </script>
 
@@ -251,6 +264,9 @@ function selectTurn(turnId: string) {
         </div>
         <Button size="sm" label="Clear" :disabled="!turns.length" @click="tracer.clear()" />
       </div>
+      <p :class="['text-xs text-neutral-500 dark:text-neutral-400']">
+        Click a row or a span of a spoken turn to play what the speech recognition heard. Swipe up and down to scroll the timeline. Pinch, or hold Ctrl and scroll, to zoom.
+      </p>
       <table v-if="spokenTurns.length" :class="['w-full text-left text-sm']">
         <thead :class="['text-xs text-neutral-500 dark:text-neutral-400']">
           <tr>
@@ -311,7 +327,7 @@ function selectTurn(turnId: string) {
           :selected-span-id="selectedSpanId"
           :time-origin="recordingStartTs"
           :hidden-subsystems="hiddenSubsystems"
-          @select-span="tracer.selectSpan($event)"
+          @select-span="selectSpan($event)"
         />
       </div>
     </div>
