@@ -15,6 +15,7 @@ import { traceSpeechOutput } from '../composables/speech-output-trace'
 import { useVoiceDrafts } from '../composables/voice-drafts'
 import { useVoiceEndJudge } from '../composables/voice-end-judge'
 import { createVoiceInputTracer } from '../composables/voice-input-trace'
+import { useListeningLeasedElsewhere } from '../composables/voice-listening-lease'
 import { useVoiceRephrase } from '../composables/voice-rephrase'
 import { observeInputLevel } from '../libs/voice/input-level'
 import { collectConversationHotwords, conversationMessagesOf, TranscriptionBiasList } from '../libs/voice/transcription-bias'
@@ -80,6 +81,8 @@ export const useVoiceStore = defineStore('voice', () => {
   let presentedInput: { requestId: string, attempt: SpeechInputAttempt } | undefined
 
   const inputTracer = createVoiceInputTracer()
+  /** While another window holds the listening lease, it owns the microphone, so controls of other windows start no input here. */
+  const listeningLeasedElsewhere = useListeningLeasedElsewhere()
 
   /**
    * Conversation terms that bias the next recognition request of each session.
@@ -407,7 +410,7 @@ export const useVoiceStore = defineStore('voice', () => {
       defineInvokeHandler(context, voiceInputCommand, async (command) => {
         switch (command.type) {
           case 'begin': {
-            if (inputRequests.has(command.requestId))
+            if (inputRequests.has(command.requestId) || listeningLeasedElsewhere.value)
               return { status: 'closed' }
 
             const attempt = beginManual(command.sessionId)

@@ -1,8 +1,11 @@
+import { defineInvoke } from '@moeru/eventa'
 import { createPinia, setActivePinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 
-import { getSpeechBusContext, voiceRequestSnapshot, voiceSnapshotChanged } from '../services/speech/bus'
+import { LEASE_DISCOVERY_MS } from '../composables/voice-listening-lease'
+import { getSpeechBusContext, voiceInputCommand, voiceListeningLease, voiceMessageCommand, voiceRequestSnapshot, voiceSnapshotChanged } from '../services/speech/bus'
 import { useVoiceStore } from './voice'
+import { useVoiceMessagesStore } from './voice-messages'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ locale: { value: 'en' }, t: (key: string) => key }),
@@ -31,5 +34,25 @@ describe('useVoiceStore().connectOutput', () => {
   it('serves other windows only when the host is not window-only', async () => {
     expect(await answersSnapshotRequest({})).toBe(true)
     expect(await answersSnapshotRequest({ windowOnly: true })).toBe(false)
+  })
+
+  // Codex review on PR #30: controls of the main window started dictation beside the devtool host that held the lease.
+  it('starts no input or voice message for a control while another window holds the lease', async () => {
+    setActivePinia(createPinia())
+    const disconnect = useVoiceStore().connectOutput(() => {
+      throw new Error('The test sends no turn')
+    })
+    useVoiceMessagesStore()
+    const bus = getSpeechBusContext()
+    await new Promise(resolve => setTimeout(resolve, LEASE_DISCOVERY_MS + 20))
+    bus.emit(voiceListeningLease, { holder: 'devtool-window', until: Date.now() + 60_000 })
+
+    const begin = await defineInvoke(bus, voiceInputCommand)({ type: 'begin', requestId: 'request-1', sessionId: 'session-1' })
+    const record = await defineInvoke(bus, voiceMessageCommand)({ type: 'record', id: 'message-1', sessionId: 'session-1' })
+
+    expect(begin).toEqual({ status: 'closed' })
+    expect(record).toEqual({ status: 'closed' })
+    bus.emit(voiceListeningLease, { holder: 'devtool-window', until: 0 })
+    disconnect()
   })
 })

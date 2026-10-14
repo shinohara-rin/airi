@@ -7,6 +7,7 @@ import { encodeBase64 } from '@moeru/std/base64'
 import { defineStore } from 'pinia'
 import { onScopeDispose, shallowRef } from 'vue'
 
+import { useListeningLeasedElsewhere } from '../composables/voice-listening-lease'
 import { VoiceMessage } from '../libs/voice/voice-message'
 import { getSpeechBusContext, voiceMessageCommand, voiceMessageDropped, voiceMessagesChanged, voiceRequestMessages } from '../services/speech/bus'
 import { useChatStore } from './chat'
@@ -36,6 +37,7 @@ export const useVoiceMessagesStore = defineStore('voice-messages', () => {
   const hearing = useHearingStore()
   const messages = new Map<string, VoiceMessage>()
   const opened = new Set<string>()
+  const listeningLeasedElsewhere = useListeningLeasedElsewhere()
   const isRecording = shallowRef(false)
   const bus = getSpeechBusContext()
 
@@ -62,7 +64,8 @@ export const useVoiceMessagesStore = defineStore('voice-messages', () => {
   }
 
   function record(command: Extract<VoiceMessageCommand, { type: 'record' }>) {
-    if (opened.has(command.id))
+    // While another window holds the listening lease, it takes the speech, so a recording here would take it twice.
+    if (opened.has(command.id) || listeningLeasedElsewhere.value)
       return false
     opened.add(command.id)
     const message = new VoiceMessage(command.id, command.sessionId, devices.input, async (draft) => {

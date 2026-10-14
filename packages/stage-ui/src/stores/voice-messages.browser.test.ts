@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createApp, defineComponent, h } from 'vue'
 import { createI18n } from 'vue-i18n'
 
+import { LEASE_DISCOVERY_MS } from '../composables/voice-listening-lease'
 import { getSpeechBusContext, voiceMessageCommand, voiceMessagesChanged } from '../services/speech/bus'
 import { useVoiceMessagesStore } from './voice-messages'
 
@@ -16,8 +17,11 @@ afterEach(() => {
   localStorage.clear()
 })
 
-/** Mounts the host store with the browser microphone adapter, then connects its command handler to the speech bus. */
-function connectHost() {
+/**
+ * Mounts the host store with the browser microphone adapter, then connects its command handler to the speech bus.
+ * It returns after the host has learned the listening leases of other windows, because it records nothing until then.
+ */
+async function connectHost() {
   const pinia = createPinia()
   let store!: ReturnType<typeof useVoiceMessagesStore>
   const app = createApp(defineComponent({ setup() {
@@ -40,12 +44,13 @@ function connectHost() {
     disposePinia(pinia)
     element.remove()
   })
+  await new Promise(resolve => setTimeout(resolve, LEASE_DISCOVERY_MS + 20))
   return { store, latest: () => snapshots.at(-1) ?? [] }
 }
 
 describe('voice messages host', () => {
   it('encodes and sends a finished recording, then keeps it with the send error for retry', async () => {
-    const { store, latest } = connectHost()
+    const { store, latest } = await connectHost()
     const command = defineInvoke(getSpeechBusContext(), voiceMessageCommand)
 
     await command({ type: 'record', id: 'message', sessionId: 'alice', replyToMessageId: 'reply-target' })
@@ -63,7 +68,7 @@ describe('voice messages host', () => {
   })
 
   it('finishes without sending when the control does not ask for it', async () => {
-    const { latest } = connectHost()
+    const { latest } = await connectHost()
     const command = defineInvoke(getSpeechBusContext(), voiceMessageCommand)
 
     await command({ type: 'record', id: 'message', sessionId: 'alice' })
