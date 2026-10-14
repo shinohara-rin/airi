@@ -22,6 +22,8 @@ export type LiveVoiceHost = ReturnType<typeof useLiveVoiceHost>
  * The host starts only on request. While it runs, it holds a listening lease, so the voice hosts of other windows,
  * for example the main window, stop listening. Two listening hosts would answer each turn twice.
  * It does not start while another window holds a lease, for example a second devtool window.
+ * The output serves only this window, so a speech command of another window, such as read-aloud, plays once, on the
+ * main window host.
  * Special tokens, such as emotions, are not played, because the page has no character.
  * Scope disposal stops the host.
  */
@@ -64,6 +66,7 @@ export function useLiveVoiceHost() {
         const disconnect = useVoiceResponseOutput({
           audioContext,
           playback: new Playback(new BrowserPlayback(audioContext, { destination: volume })),
+          windowOnly: true,
           onSpecial: () => {},
           onPlaybackStart: () => {
             playing += 1
