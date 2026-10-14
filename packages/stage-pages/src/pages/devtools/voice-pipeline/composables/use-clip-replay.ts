@@ -68,7 +68,10 @@ export function useClipReplay() {
         await Promise.race([source.clipEnded, stopped])
         await Promise.race([sleep(RELEASE_TAIL_MS), stopped])
         if (!run.signal.aborted)
-          await attempt.end()
+          await Promise.race([attempt.end(), stopped])
+        // The end can wait for speech recognition and the chat. A stopped replay drops its turn instead.
+        if (run.signal.aborted)
+          attempt.cancel('Replay stopped')
       }
 
       // An input can end and submit after the clip ends. The loop also waits for inputs that started while it waited.
