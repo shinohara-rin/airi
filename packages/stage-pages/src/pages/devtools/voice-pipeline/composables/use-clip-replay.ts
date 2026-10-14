@@ -28,7 +28,8 @@ const HISTORY_MS = 360
  *   A wake word reads its own microphone input, so a replayed clip cannot wake.
  *
  * The microphone returns when every input that the clip started has settled, so a turn is not cancelled early.
- * A change of the microphone setting, also from another window, puts the microphone back at once, so it stops the replay.
+ * A change of the microphone or the input mode, also from another window, changes how the voice host listens, so it
+ * stops the replay. The replay keeps the input mode of its start.
  * Scope disposal stops a replay that is still running.
  */
 export function useClipReplay() {
@@ -53,9 +54,10 @@ export function useClipReplay() {
     const stopped = new Promise<void>(resolve => run.signal.addEventListener('abort', () => resolve(), { once: true }))
 
     // The voice controller replaces its audio with each new microphone input, which ends the replay input.
-    const stopDeviceWatch = watch(() => devices.input, () => {
-      error.value = 'The microphone setting changed, so the replay stopped.'
-      run.abort('Microphone changed')
+    // The listening of the host follows the microphone switch and the input mode.
+    const stopSettingsWatch = watch([() => devices.input, () => devices.enabled, () => hearing.inputMode], () => {
+      error.value = 'A listening setting changed, so the replay stopped.'
+      run.abort('Listening setting changed')
     }, { flush: 'sync' })
 
     try {
@@ -98,7 +100,7 @@ export function useClipReplay() {
       error.value = errorMessageFrom(cause) ?? 'The replay failed.'
     }
     finally {
-      stopDeviceWatch()
+      stopSettingsWatch()
       stopObserving()
       voice.controller.replaceAudio(devices.input)
       if (detectsSpeech && (!devices.enabled || !listensContinuously(hearing.inputMode)))
