@@ -30,4 +30,17 @@ describe('useIOTracerStore', () => {
     // The child ended first, but the turn starts where its parent started.
     expect(store.turns[0]!.startTs).toBe(store.turns[0]!.spans[1]!.startTs)
   })
+
+  it('records a span once when the remote channel of the same window also delivers it', async () => {
+    setActivePinia(createPinia())
+    const store = useIOTracerStore()
+    store.startRecording()
+
+    startSpan(IOSpanNames.SpeechRecognition, undefined, { [IOAttributes.Subsystem]: IOSubsystems.ASR }).end()
+    // The BroadcastChannel copy arrives in a later task.
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    expect(store.turns.flatMap(turn => turn.spans)).toHaveLength(1)
+    expect(store.rawSpanCount).toBe(1)
+  })
 })

@@ -32,6 +32,12 @@ export const useIOTracerStore = defineStore('devtools:io-tracer', () => {
   const rawSpanCount = ref(0)
 
   const turnsByTraceId = new Map<string, IOTurn>()
+  /**
+   * Spans already recorded, by span ID.
+   * The tracer posts each span to the BroadcastChannel for other windows, and the remote listener of this window
+   * receives that post too, because it is a different channel object. The ID check keeps one copy.
+   */
+  const recordedSpanIds = new Set<string>()
 
   const rawSpans: ReadableSpan[] = []
   let unsubscribeRemote: (() => void) | undefined
@@ -71,6 +77,9 @@ export const useIOTracerStore = defineStore('devtools:io-tracer', () => {
   }
 
   function handleSpan(readable: ReadableSpan) {
+    if (recordedSpanIds.has(readable.spanContext().spanId))
+      return
+    recordedSpanIds.add(readable.spanContext().spanId)
     rawSpans.push(readable)
     rawSpanCount.value++
 
@@ -95,8 +104,11 @@ export const useIOTracerStore = defineStore('devtools:io-tracer', () => {
 
         while (turns.value.length > MAX_TURNS) {
           const evicted = turns.value.shift()
-          if (evicted)
+          if (evicted) {
             turnsByTraceId.delete(evicted.id)
+            for (const span of evicted.spans)
+              recordedSpanIds.delete(span.id)
+          }
         }
       }
       // Spans arrive when they end, so a child, such as a VAD segment, can arrive before the span that starts the turn.
@@ -200,6 +212,7 @@ export const useIOTracerStore = defineStore('devtools:io-tracer', () => {
   function clear() {
     turns.value = []
     turnsByTraceId.clear()
+    recordedSpanIds.clear()
     rawSpans.length = 0
     rawSpanCount.value = 0
     selectedSpanId.value = null
