@@ -208,7 +208,7 @@ function selectTurn(turnId: string) {
         v-if="inputMode !== 'always-on'"
         icon="i-solar:microphone-3-bold-duotone"
         :label="pushToTalk.held.value ? 'Release to send' : 'Hold to talk'"
-        :disabled="!host.running.value || !pushToTalk.enabled.value"
+        :disabled="!host.running.value || !pushToTalk.enabled.value || microphoneBusy || !!clip.recording.value"
         @pointerdown="pushToTalk.press()"
         @pointerup="pushToTalk.release()"
         @pointerleave="pushToTalk.release()"
