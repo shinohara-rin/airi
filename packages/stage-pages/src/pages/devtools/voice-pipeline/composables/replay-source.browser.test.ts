@@ -26,3 +26,14 @@ it('delivers the clip in real time, then silence until the reader leaves', async
   expect(blocks.slice(3).every(block => block.channels[0]!.every(sample => sample === 0))).toBe(true)
   expect(new Set(blocks.map(block => block.range.sourceId)).size).toBe(1)
 })
+
+it('ends the clip when the reader leaves before the clip ends', async () => {
+  const source = createReplaySource(new Float32Array(1000), 1000)
+  const reader = new AbortController()
+
+  for await (const _block of source.open(reader.signal))
+    reader.abort()
+
+  // The clip is 1 s long. It must end with the reader, not after its full length.
+  await expect(Promise.race([source.clipEnded.then(() => 'ended'), new Promise(resolve => setTimeout(resolve, 500, 'pending'))])).resolves.toBe('ended')
+})

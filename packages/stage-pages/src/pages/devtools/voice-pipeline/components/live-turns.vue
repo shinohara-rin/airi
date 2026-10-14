@@ -34,6 +34,12 @@ const pushToTalk = useVoicePushToTalk()
 const clip = useClipInput(sampleRate)
 const replay = useClipReplay()
 
+// Stopping the host cancels the input that a replay holds, so the replay stops with it and returns the microphone.
+function stopHost() {
+  replay.stop()
+  host.stop()
+}
+
 const inputModeOptions = [
   { value: 'always-on', label: 'Always on', description: 'Voice activity detection starts and ends each input.' },
   { value: 'push-to-talk', label: 'Push to Talk', description: 'Hold the button below. A replayed clip holds it for its length.' },
@@ -114,7 +120,7 @@ function selectTurn(turnId: string) {
         :disabled="host.starting.value"
         @click="host.start()"
       />
-      <Button v-else icon="i-solar:stop-bold" label="Stop the voice host" @click="host.stop()" />
+      <Button v-else icon="i-solar:stop-bold" label="Stop the voice host" @click="stopHost()" />
       <span v-if="host.running.value" :class="['text-sm text-neutral-500 dark:text-neutral-400']">
         This page listens and plays the replies now. Leaving the page stops the host.
       </span>

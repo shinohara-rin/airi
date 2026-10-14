@@ -17,8 +17,8 @@ import { computed, effectScope, onScopeDispose, ref, shallowRef, watch } from 'v
 const HOST_PROBE_MS = 1500
 
 /**
- * Asks the speech bus for a voice host. The bus is a BroadcastChannel, which does not deliver a post to its own
- * sender, so an answer comes from another window, for example the main window of the desktop app.
+ * Asks the speech bus for a voice host. This page answers only while its own host runs, and the probe runs before
+ * that, so a connected answer comes from another window, for example the main window of the desktop app.
  */
 async function findOtherHost() {
   const bus = getSpeechBusContext()

@@ -4,7 +4,10 @@ import type { LiveAudioSource, PcmBlock } from '@proj-airi/pipelines-audio'
 const BLOCK_MS = 100
 
 export interface ReplaySource extends LiveAudioSource {
-  /** Resolves when the last clip block was delivered. Silence follows until the reader leaves. */
+  /**
+   * Resolves when the last clip block was delivered. Silence follows until the reader leaves.
+   * It also resolves when the reader leaves before the clip ends, because the clip does not play further then.
+   */
   readonly clipEnded: Promise<void>
 }
 
@@ -29,6 +32,7 @@ export function createReplaySource(samples: Float32Array, sampleRate: number): R
         await new Promise(resolve => setTimeout(resolve, Math.max(0, dueAt - performance.now())))
         if (signal.aborted) {
           controller.close()
+          clipEnded.resolve()
           return
         }
 
