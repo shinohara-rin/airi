@@ -51,43 +51,58 @@ export function useElementSpeakingHold() {
   return { start, end }
 }
 
+/** While another window speaks, this page asks its output host for the state this often. */
+const CHECK_MS = 2000
+/** An output host that does not answer in this time is gone, for example with a closed window. */
+const ANSWER_MS = 1000
+
 /**
  * Holds the speaking flag while the output host of another window plays speech, for example a reply or read-aloud
  * in the main window. That audio comes out of the same speakers, so this page's listener must not take it as a turn.
  *
- * The first state comes from a request to that host, and later states from its change events. When no host answers
- * within one second, the flag waits for the next change event. Scope disposal releases the hold.
+ * States come from the change events of that host. A request gets the first state, and while the hold lasts, a request
+ * every `CHECK_MS` checks it. A host that closes during speech sends no final event, so a request without an answer
+ * ends the hold. Scope disposal also releases it.
  * The page has no stage of its own. A stage in this window reports this page's own flag, so the hold would never end.
  */
 export function useOtherWindowSpeakingHold() {
   const bus = getSpeechBusContext()
+  const getPlaybackState = defineInvoke(bus, speechOutputGetPlaybackState)
   let release: (() => void) | undefined
-  let reported = false
+  let check: ReturnType<typeof setInterval> | undefined
+  /** Counts requests and change events, so that an older answer does not replace a newer state. */
+  let latest = 0
+  let disposed = false
 
   function follow(speaking: boolean) {
     if (speaking) {
       release ??= holdSpeaking()
+      check ??= setInterval(ask, CHECK_MS)
       return
     }
+    clearInterval(check)
+    check = undefined
     release?.()
     release = undefined
+  }
+
+  function ask() {
+    const request = ++latest
+    void getPlaybackState(undefined, { signal: AbortSignal.timeout(ANSWER_MS) })
+      .then(state => state.speaking, () => false)
+      .then((speaking) => {
+        if (request === latest && !disposed)
+          follow(speaking)
+      })
   }
 
   const stopChanges = bus.on(speechOutputPlaybackStateChangedEvent, ({ body }) => {
     if (!body)
       return
-    reported = true
+    latest += 1
     follow(body.speaking)
   })
-  let disposed = false
-  defineInvoke(bus, speechOutputGetPlaybackState)(undefined, { signal: AbortSignal.timeout(1000) })
-    .then((state) => {
-      // A change event that arrived first is newer than this answer.
-      if (!reported && !disposed)
-        follow(state.speaking)
-    })
-    // No output host answered, for example in stage-web without a stage tab. Change events still arrive.
-    .catch(() => {})
+  ask()
 
   onScopeDispose(() => {
     disposed = true
