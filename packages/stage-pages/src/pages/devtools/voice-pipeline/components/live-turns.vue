@@ -5,10 +5,11 @@ import { useVoicePushToTalk } from '@proj-airi/stage-ui/composables/voice-input-
 import { getSpeechBusContext, voiceInputLevel } from '@proj-airi/stage-ui/services/speech/bus'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
 import { useIOTracerStore } from '@proj-airi/stage-ui/stores/devtools/io-tracer'
-import { useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
+import { listensContinuously, useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
 import { useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings/audio-device'
 import { useVoiceStore } from '@proj-airi/stage-ui/stores/voice'
 import { Button, Callout, FieldCheckbox, FieldInputFile, FieldSelect } from '@proj-airi/ui'
+import { useEventListener } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 
@@ -34,6 +35,16 @@ const pushToTalk = useVoicePushToTalk()
 const clip = useClipInput(sampleRate)
 const replay = useClipReplay()
 
+// The button sees no pointer release after the page loses focus, so the hold is cancelled then, as for the hold key.
+useEventListener(window, 'blur', () => pushToTalk.cancel('Page lost focus during the hold'))
+useEventListener(document, 'visibilitychange', () => {
+  if (document.visibilityState === 'hidden')
+    pushToTalk.cancel('Page was hidden during the hold')
+})
+
+// A host that listens all the time would take the recorded speech as a live turn.
+const recordingBlocked = computed(() => host.running.value && microphoneEnabled.value && listensContinuously(inputMode.value))
+
 // Stopping the host cancels the input that a replay holds, so the replay stops with it and returns the microphone.
 function stopHost() {
   replay.stop()
@@ -56,12 +67,14 @@ const activeChat = computed(() => {
 const phase = computed(() => voice.state?.phase ?? 'idle')
 const liveText = computed(() => voice.transcript?.transcript.text ?? '')
 
-// The voice host publishes the level while an input captures from the microphone.
-const level = ref(0)
+// The voice host publishes the level while an input captures from the microphone. It sends no level when the
+// capture ends, so the bar shows the level only while the input captures.
+const lastLevel = ref(0)
 onScopeDispose(getSpeechBusContext().on(voiceInputLevel, ({ body }) => {
   if (body)
-    level.value = body.level
+    lastLevel.value = body.level
 }))
+const level = computed(() => phase.value === 'capturing' ? lastLevel.value : 0)
 
 // Timeline
 
@@ -163,6 +176,7 @@ function selectTurn(turnId: string) {
         @pointerdown="pushToTalk.press()"
         @pointerup="pushToTalk.release()"
         @pointerleave="pushToTalk.release()"
+        @pointercancel="pushToTalk.cancel('Pointer was cancelled during the hold')"
       />
       <div :class="['flex items-center gap-2 text-sm']">
         <span :class="['text-neutral-500 dark:text-neutral-400']">Input</span>
@@ -187,9 +201,12 @@ function selectTurn(turnId: string) {
         </div>
         <div :class="['text-xs text-neutral-500 dark:text-neutral-400']">
           Records without echo cancellation, noise suppression, or gain control. Replay it to repeat the same turn.
+          <template v-if="recordingBlocked">
+            Stop the voice host or turn off its microphone input first, because the host takes the recorded speech as a turn.
+          </template>
         </div>
         <div>
-          <Button v-if="!clip.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" @click="clip.record" />
+          <Button v-if="!clip.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="recordingBlocked" @click="clip.record" />
           <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="clip.stop" />
         </div>
       </div>
