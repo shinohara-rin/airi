@@ -62,7 +62,7 @@ describe('createSemanticReranker', () => {
 
     await rerank({ text, candidates: [{ ...reconciliation, candidate: '对账', term: 'reconciliation' }, recognition], sessionId: 'alice' }, new AbortController().signal)
 
-    expect(embedder.queries).toEqual(['first message\nsecond message\nI am doing the ___ now'])
+    expect(embedder.queries).toEqual(['I am doing the ___ now\nsecond message\nfirst message'])
     expect(embedder.passages).toEqual(['对账 (reconciliation): Matching ledger entries against a bank statement.', 'recognition: Identifying speech heard by a microphone.'])
   })
 
@@ -74,7 +74,7 @@ describe('createSemanticReranker', () => {
     await rerank({ text, candidates, sessionId: 'bob' }, new AbortController().signal)
 
     expect(history).toHaveBeenCalledWith('bob')
-    expect(embedder.queries).toEqual(['messages of bob\nI am doing the ___ now'])
+    expect(embedder.queries).toEqual(['I am doing the ___ now\nmessages of bob'])
   })
 
   it('embeds one query for each group of overlapping spans', async () => {
@@ -94,7 +94,7 @@ describe('createSemanticReranker', () => {
 
     await rerank({ text, candidates, sessionId: 'alice' }, new AbortController().signal)
 
-    expect(embedder.queries).toEqual(['new topic\nI am doing the ___ now'])
+    expect(embedder.queries).toEqual(['I am doing the ___ now\nnew topic'])
   })
 
   it('embeds each passage once across inputs', async () => {
@@ -119,12 +119,32 @@ describe('createSemanticReranker', () => {
   })
 
   it('keeps the phonetic order when the embeddings miss the budget', async () => {
+    vi.useFakeTimers()
     const pending = new Promise<readonly number[]>(() => {})
-    const rerank = createSemanticReranker({ embedder: { embedQuery: () => pending, embedPassage: () => pending }, history: () => [], budgetMs: 5 })
+    const embedQuery = vi.fn<SemanticEmbedder['embedQuery']>(() => pending)
+    const rerank = createSemanticReranker({ embedder: { embedQuery, embedPassage: () => pending }, history: () => [], budgetMs: 400 })
+    let settled: readonly PhoneticCandidate[] | undefined
 
-    const ranked = await rerank({ text, candidates, sessionId: 'alice' }, new AbortController().signal)
+    void rerank({ text, candidates, sessionId: 'alice' }, new AbortController().signal).then(ranked => settled = ranked)
+    await vi.advanceTimersByTimeAsync(399)
+    const beforeBudget = settled
+    await vi.advanceTimersByTimeAsync(1)
 
-    expect(ranked).toBe(candidates)
+    expect(embedQuery).toHaveBeenCalledTimes(1)
+    expect(beforeBudget).toBeUndefined()
+    expect(settled).toBe(candidates)
+    vi.useRealTimers()
+  })
+
+  it('passes the input signal to the query embedding, so a superseded input can skip it', async () => {
+    const embedder = createFakeEmbedder()
+    const embedQuery = vi.spyOn(embedder, 'embedQuery')
+    const rerank = createSemanticReranker({ embedder, history: () => [] })
+    const controller = new AbortController()
+
+    await rerank({ text, candidates, sessionId: 'alice' }, controller.signal)
+
+    expect(embedQuery).toHaveBeenCalledWith('I am doing the ___ now', controller.signal)
   })
 
   it('keeps the phonetic order when the embedder fails, and embeds the passage again on the next input', async () => {

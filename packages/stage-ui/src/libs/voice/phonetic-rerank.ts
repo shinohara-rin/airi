@@ -8,7 +8,8 @@ import { errorMessageFrom, merge } from '@moeru/std'
  * Both methods return a unit vector, so the dot product is the cosine similarity.
  */
 export interface SemanticEmbedder {
-  embedQuery: (text: string) => Promise<readonly number[]>
+  /** An aborted `signal` lets the embedder skip work that has not started. */
+  embedQuery: (text: string, signal?: AbortSignal) => Promise<readonly number[]>
   embedPassage: (text: string) => Promise<readonly number[]>
 }
 
@@ -16,7 +17,7 @@ export interface SemanticRerankOptions {
   embedder: SemanticEmbedder
   /**
    * Reads the recent conversation of a session when an input reranks, oldest message first.
-   * The newest messages carry the topic, so the reranker keeps the end of this text when it is too long.
+   * The newest messages carry the topic, so the reranker keeps them when the history is too long.
    */
   history: (sessionId: string) => readonly string[]
   /**
@@ -35,7 +36,9 @@ export interface SemanticRerankOptions {
    */
   budgetMs: number
   /**
-   * The most characters of history in the query. Small embedding models read about 512 tokens.
+   * The most characters of history in the query.
+   * Small embedding models read about 512 tokens and cut the rest. The query puts the transcript first and the newest
+   * message next, so a cut drops only the oldest history.
    * @default 1200
    */
   historyChars: number
@@ -73,7 +76,7 @@ function dot(a: readonly number[], b: readonly number[]) {
  * Creates a `rerank` hook for the phonetic match plugin that orders candidates by meaning as well as by sound.
  *
  * Sound alone cannot choose between near ties, for example `reconciliation` and `recognition` for `resilation`.
- * For each group of overlapping heard spans, the query is the recent conversation plus the transcript with the group masked.
+ * For each group of overlapping heard spans, the query is the transcript with the group masked, then the recent conversation.
  * Candidates that overlap are readings of the same audio, so they share one query, and few groups mean few embeddings.
  * Each candidate is a passage of its written form, its term, and its description.
  * The reranker moves each candidate by how much better than the pool average its passage fits the query.
@@ -100,12 +103,12 @@ export function createSemanticReranker(options: Pick<SemanticRerankOptions, 'emb
     return embedding
   }
 
-  async function score({ text, candidates, sessionId }: PhoneticRerankRequest) {
-    const context = history(sessionId).join('\n').slice(-historyChars)
+  async function score({ text, candidates, sessionId }: PhoneticRerankRequest, signal: AbortSignal) {
+    const context = [...history(sessionId)].reverse().join('\n').slice(0, historyChars)
     const queries = new Map<PhoneticCandidate, Promise<readonly number[]>>()
     for (const group of overlapGroups(candidates)) {
       const masked = `${text.slice(0, group.start)}${MASK}${text.slice(group.end)}`
-      const query = embedder.embedQuery(context ? `${context}\n${masked}` : masked)
+      const query = embedder.embedQuery(context ? `${masked}\n${context}` : masked, signal)
       for (const candidate of group.members)
         queries.set(candidate, query)
     }
@@ -127,7 +130,7 @@ export function createSemanticReranker(options: Pick<SemanticRerankOptions, 'emb
     if (request.candidates.length < 2)
       return request.candidates
 
-    const scored = score(request)
+    const scored = score(request, signal)
     let timer: ReturnType<typeof setTimeout> | undefined
     const fallback = new Promise<readonly PhoneticCandidate[]>((resolve) => {
       timer = setTimeout(resolve, budgetMs, request.candidates)
