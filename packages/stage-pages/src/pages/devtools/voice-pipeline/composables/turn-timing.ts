@@ -6,7 +6,7 @@ import { IOEvents, IOSpanNames, IOSubsystems } from '@proj-airi/stage-shared'
  * The moments of one spoken turn, in milliseconds since the epoch. A missing field means the turn has no such moment yet.
  *
  * - `speechEndTs`: the end of the last speech segment that VAD found. Push to Talk has no VAD, so it is the capture end.
- * - `transcriptTs`: the end of the last speech recognition request, when the final transcript exists.
+ * - `transcriptTs`: the end of the last speech recognition request that returned a transcript. A failed request has none.
  * - `firstTokenTs`: the first token of the reply.
  * - `firstAudioTs`: the start of the first reply audio.
  */
@@ -52,7 +52,7 @@ export function voiceTurnTiming(turn: IOTurn): VoiceTurnTiming {
 
   return {
     speechEndTs: maxOf(ended(IOSubsystems.VAD)) ?? voiceInput?.events?.find(event => event.name === IOEvents.VoiceCaptureEnd)?.timeTs,
-    transcriptTs: maxOf(ended(IOSubsystems.ASR)),
+    transcriptTs: maxOf(turn.spans.filter(span => span.subsystem === IOSubsystems.ASR && span.endTs !== undefined && typeof span.meta.text === 'string').map(span => span.endTs!)),
     firstTokenTs: minOf(turn.spans.flatMap(span => span.subsystem === IOSubsystems.LLM && typeof span.meta.firstTokenTs === 'number' ? [span.meta.firstTokenTs] : [])),
     firstAudioTs: minOf(turn.spans.filter(span => span.subsystem === IOSubsystems.Playback).map(span => span.startTs)),
     outcome: typeof voiceInput?.meta.outcome === 'string' ? voiceInput.meta.outcome : undefined,

@@ -16,7 +16,7 @@ const spoken: IOTurn = {
   spans: [
     span({ subsystem: IOSubsystems.VAD, name: IOSpanNames.VoiceActivityDetection, startTs: 1100, endTs: 1500 }),
     span({ subsystem: IOSubsystems.VAD, name: IOSpanNames.VoiceActivityDetection, startTs: 1800, endTs: 2400 }),
-    span({ subsystem: IOSubsystems.ASR, name: IOSpanNames.SpeechRecognition, startTs: 1100, endTs: 2700 }),
+    span({ subsystem: IOSubsystems.ASR, name: IOSpanNames.SpeechRecognition, startTs: 1100, endTs: 2700, meta: { text: '你好' } }),
     span({ subsystem: IOSubsystems.VoiceInput, name: IOSpanNames.VoiceInput, startTs: 1000, endTs: 2800, meta: { outcome: 'committed', id: 'input-1' } }),
     span({ subsystem: IOSubsystems.LLM, name: IOSpanNames.LLMInference, startTs: 2900, endTs: 4000, meta: { firstTokenTs: 3300 } }),
     span({ subsystem: IOSubsystems.Playback, name: IOSpanNames.AudioPlayback, startTs: 4100, endTs: 5000 }),
@@ -52,6 +52,16 @@ describe('voiceTurnTiming', () => {
     expect(voiceTurnTiming(pushToTalk).speechEndTs).toBe(2500)
     // VAD finds the speech end inside the capture, so it wins when it exists.
     expect(voiceTurnTiming({ ...pushToTalk, spans: [...spoken.spans.slice(0, 2), ...pushToTalk.spans] }).speechEndTs).toBe(2400)
+  })
+
+  // Codex review on PR #30: a failed recognition request still showed a transcript time.
+  it('takes no transcript time from a recognition request that returned no text', () => {
+    const failed: IOTurn = {
+      ...spoken,
+      spans: spoken.spans.map(item => item.subsystem === IOSubsystems.ASR ? { ...item, meta: {} } : item),
+    }
+
+    expect(voiceTurnTiming(failed).transcriptTs).toBeUndefined()
   })
 
   it('measures nothing without a speech end, as for a typed turn', () => {
