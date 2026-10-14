@@ -11,17 +11,24 @@ import { getSpeechBusContext, voiceListeningLease, voiceListeningLeaseQuery } fr
  */
 const LEASE_MS = 90_000
 const RENEW_MS = 5_000
+/**
+ * A new observer waits this long for the holders to answer its query, and reports a lease until then.
+ * The answer crosses a BroadcastChannel, so it arrives in a later task. Timer throttling of hidden pages does not delay it.
+ */
+export const LEASE_DISCOVERY_MS = 250
 
 /** One ID for each window, so that the hosts of a window ignore the lease of that window. */
 const windowId = nanoid()
 
 /**
- * Tells if another window holds a listening lease now. It asks the holders to renew at once, so a window that opens
- * while another window holds a lease learns it before its microphone opens. Scope disposal stops the observation.
+ * Tells if another window holds a listening lease now. It asks the holders to renew at once, and reports a lease for
+ * `LEASE_DISCOVERY_MS` while the answers arrive. So a window that opens during a lease of another window does not
+ * listen before it learns the lease. Scope disposal stops the observation.
  */
 export function useListeningLeasedElsewhere(): Readonly<Ref<boolean>> {
   const leases = new Map<string, number>()
-  const leased = ref(false)
+  let discovering = true
+  const leased = ref(true)
   let expiry: ReturnType<typeof setTimeout> | undefined
 
   function update() {
@@ -31,7 +38,7 @@ export function useListeningLeasedElsewhere(): Readonly<Ref<boolean>> {
       if (until <= now)
         leases.delete(holder)
     }
-    leased.value = leases.size > 0
+    leased.value = discovering || leases.size > 0
     if (leases.size)
       expiry = setTimeout(update, Math.min(...leases.values()) - now)
   }
@@ -44,8 +51,13 @@ export function useListeningLeasedElsewhere(): Readonly<Ref<boolean>> {
     update()
   })
   bus.emit(voiceListeningLeaseQuery, undefined)
+  const discovery = setTimeout(() => {
+    discovering = false
+    update()
+  }, LEASE_DISCOVERY_MS)
   onScopeDispose(() => {
     stop()
+    clearTimeout(discovery)
     clearTimeout(expiry)
   })
 

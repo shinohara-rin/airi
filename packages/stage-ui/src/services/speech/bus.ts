@@ -25,7 +25,8 @@ export const speechOutputGetPlaybackState = defineInvokeEventa<SpeechOutputPlayb
 /** The output host sends its new playback state after `speaking` or `voicing` changes. */
 export const speechOutputPlaybackStateChangedEvent = defineEventa<SpeechOutputPlaybackState>('eventa:audio:speech:output:playback-state-changed')
 
-const BUS_CHANNEL_NAME = 'proj-airi:pipelines:outputs:speech'
+/** The BroadcastChannel of the speech bus. Every window of the app opens it. */
+export const BUS_CHANNEL_NAME = 'proj-airi:pipelines:outputs:speech'
 
 let context: ReturnType<typeof createBroadcastChannelContext>['context'] | undefined
 let channel: BroadcastChannel | undefined
