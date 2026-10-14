@@ -12,7 +12,7 @@ import { useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings/audi
 import { useSpeechOutputControlStore } from '@proj-airi/stage-ui/stores/speech-output-control'
 import { computed, effectScope, onScopeDispose, ref, shallowRef, watch } from 'vue'
 
-import { holdSpeaking } from './speaking-holds'
+import { holdSpeaking, useOtherWindowSpeakingHold } from './speaking-holds'
 
 export type LiveVoiceHost = ReturnType<typeof useLiveVoiceHost>
 
@@ -25,7 +25,8 @@ export type LiveVoiceHost = ReturnType<typeof useLiveVoiceHost>
  * for example the main window, stop listening. Two listening hosts would answer each turn twice.
  * It does not start while another window holds a lease, for example a second devtool window.
  * The output serves only this window, so a speech command of another window, such as read-aloud, plays once, on the
- * main window host.
+ * main window host. While that host plays speech, this page holds the speaking flag, so the listener does not take
+ * the speech as a turn.
  * Special tokens, such as emotions, are not played, because the page has no character.
  * Scope disposal stops the host.
  */
@@ -74,6 +75,7 @@ export function useLiveVoiceHost() {
           onPlaybackStart: () => playing.push(holdSpeaking()),
           onPlaybackEnd: () => playing.shift()?.(),
         })
+        useOtherWindowSpeakingHold()
         useVoiceListening()
 
         onScopeDispose(() => {

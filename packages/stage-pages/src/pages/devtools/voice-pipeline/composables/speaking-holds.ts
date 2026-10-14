@@ -1,3 +1,5 @@
+import { defineInvoke } from '@moeru/eventa'
+import { getSpeechBusContext, speechOutputGetPlaybackState, speechOutputPlaybackStateChangedEvent } from '@proj-airi/stage-ui/services/speech/bus'
 import { useSpeakingStore } from '@proj-airi/stage-ui/stores/audio'
 import { onScopeDispose } from 'vue'
 
@@ -47,4 +49,49 @@ export function useElementSpeakingHold() {
 
   onScopeDispose(end)
   return { start, end }
+}
+
+/**
+ * Holds the speaking flag while the output host of another window plays speech, for example a reply or read-aloud
+ * in the main window. That audio comes out of the same speakers, so this page's listener must not take it as a turn.
+ *
+ * The first state comes from a request to that host, and later states from its change events. When no host answers
+ * within one second, the flag waits for the next change event. Scope disposal releases the hold.
+ * The page has no stage of its own. A stage in this window reports this page's own flag, so the hold would never end.
+ */
+export function useOtherWindowSpeakingHold() {
+  const bus = getSpeechBusContext()
+  let release: (() => void) | undefined
+  let reported = false
+
+  function follow(speaking: boolean) {
+    if (speaking) {
+      release ??= holdSpeaking()
+      return
+    }
+    release?.()
+    release = undefined
+  }
+
+  const stopChanges = bus.on(speechOutputPlaybackStateChangedEvent, ({ body }) => {
+    if (!body)
+      return
+    reported = true
+    follow(body.speaking)
+  })
+  let disposed = false
+  defineInvoke(bus, speechOutputGetPlaybackState)(undefined, { signal: AbortSignal.timeout(1000) })
+    .then((state) => {
+      // A change event that arrived first is newer than this answer.
+      if (!reported && !disposed)
+        follow(state.speaking)
+    })
+    // No output host answered, for example in stage-web without a stage tab. Change events still arrive.
+    .catch(() => {})
+
+  onScopeDispose(() => {
+    disposed = true
+    stopChanges()
+    follow(false)
+  })
 }
