@@ -56,6 +56,7 @@ export function useLiveVoiceHost() {
   const scope = shallowRef<EffectScope>()
   const starting = ref(false)
   const error = ref<string>()
+  let disposed = false
 
   async function start() {
     if (scope.value || starting.value)
@@ -74,6 +75,9 @@ export function useLiveVoiceHost() {
     finally {
       starting.value = false
     }
+    // The page can close during the probe. A host started then has no owner to stop it.
+    if (disposed)
+      return
 
     const created = effectScope(true)
     try {
@@ -121,7 +125,10 @@ export function useLiveVoiceHost() {
     scope.value = undefined
   }
 
-  onScopeDispose(stop)
+  onScopeDispose(() => {
+    disposed = true
+    stop()
+  })
 
   return { running: computed(() => !!scope.value), starting, error, start, stop }
 }
