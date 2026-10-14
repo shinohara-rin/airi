@@ -116,6 +116,7 @@
     "@sherpaw/asr": "catalog:",
     "@sherpaw/kws": "catalog:",
     "@sherpaw/preloader": "catalog:",
+    "@sherpaw/shared": "catalog:",
     "@sherpaw/xsai-transcription": "catalog:",
     "@shikijs/rehype": "catalog:",
     "@shopify/draggable": "catalog:",
