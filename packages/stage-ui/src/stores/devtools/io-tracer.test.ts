@@ -56,4 +56,17 @@ describe('useIOTracerStore', () => {
     expect(store.rawSpanCount).toBe(60)
     expect(store.turns).toHaveLength(50)
   })
+
+  it('keeps a cleared span out when its remote copy arrives after the clear', async () => {
+    setActivePinia(createPinia())
+    const store = useIOTracerStore()
+    store.startRecording()
+
+    startSpan(IOSpanNames.SpeechRecognition, undefined, { [IOAttributes.Subsystem]: IOSubsystems.ASR }).end()
+    store.clear()
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    expect(store.turns).toHaveLength(0)
+    expect(store.rawSpanCount).toBe(0)
+  })
 })

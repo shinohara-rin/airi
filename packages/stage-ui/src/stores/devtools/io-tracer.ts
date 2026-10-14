@@ -38,7 +38,7 @@ export const useIOTracerStore = defineStore('devtools:io-tracer', () => {
    * Spans already recorded, by span ID.
    * The tracer posts each span to the BroadcastChannel for other windows, and the remote listener of this window
    * receives that post too, because it is a different channel object. The ID check keeps one copy.
-   * IDs outlive the eviction of their turn, because a copy can still wait in the channel queue.
+   * IDs outlive the eviction of their turn and a clear, because a copy can still wait in the channel queue.
    */
   const recordedSpanIds = new Set<string>()
 
@@ -214,7 +214,6 @@ export const useIOTracerStore = defineStore('devtools:io-tracer', () => {
   function clear() {
     turns.value = []
     turnsByTraceId.clear()
-    recordedSpanIds.clear()
     rawSpans.length = 0
     rawSpanCount.value = 0
     selectedSpanId.value = null
