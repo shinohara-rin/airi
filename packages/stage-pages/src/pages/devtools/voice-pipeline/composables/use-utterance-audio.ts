@@ -1,9 +1,10 @@
 import type { Position } from '@proj-airi/pipelines-audio'
 
 import { toWav } from '@proj-airi/audio/encoding'
-import { useSpeakingStore } from '@proj-airi/stage-ui/stores/audio'
 import { useVoiceStore } from '@proj-airi/stage-ui/stores/voice'
 import { onScopeDispose, shallowReactive, shallowRef } from 'vue'
+
+import { holdSpeaking } from './speaking-holds'
 
 /** The IO tracer keeps 50 turns, so older utterances have no span to click. */
 const MAX_UTTERANCES = 50
@@ -34,7 +35,6 @@ function concat(parts: readonly Float32Array[]) {
  */
 export function useUtteranceAudio() {
   const voice = useVoiceStore()
-  const speaking = useSpeakingStore()
   const utterances = shallowReactive(new Map<string, UtteranceAudio>())
   const playing = shallowRef<HTMLAudioElement>()
   const copies = new Set<AbortController>()
@@ -100,18 +100,14 @@ export function useUtteranceAudio() {
     stop()
     const url = URL.createObjectURL(new Blob([toWav(utterance.samples.buffer, utterance.sampleRate)], { type: 'audio/wav' }))
     const element = new Audio(url)
-    // A reply that plays already owns the flag, and its end clears it.
-    const marksSpeech = !speaking.nowSpeaking
-    if (marksSpeech)
-      speaking.nowSpeaking = true
+    const releaseSpeaking = holdSpeaking()
     let released = false
     const release = () => {
       if (released)
         return
       released = true
       URL.revokeObjectURL(url)
-      if (marksSpeech)
-        speaking.nowSpeaking = false
+      releaseSpeaking()
       if (playing.value === element)
         playing.value = undefined
       if (releasePlaying === release)

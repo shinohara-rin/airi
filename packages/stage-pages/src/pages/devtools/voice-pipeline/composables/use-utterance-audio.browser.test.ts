@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { effectScope, reactive } from 'vue'
 
+import { holdSpeaking } from './speaking-holds'
 import { useUtteranceAudio } from './use-utterance-audio'
 
 const speaking = reactive({ nowSpeaking: false })
@@ -32,15 +33,17 @@ describe('useUtteranceAudio', () => {
     dispose()
   })
 
-  it('leaves the flag to a reply that already plays', () => {
+  // Codex review on PR #30: a reply that ended during a played turn cleared the flag that the turn still needed.
+  it('keeps the flag until every playback of the page ends', () => {
     const { audio, dispose } = setup()
-    speaking.nowSpeaking = true
+    const releaseReply = holdSpeaking()
 
     audio.play('input-1')
-    audio.stop()
-
+    releaseReply()
     expect(speaking.nowSpeaking).toBe(true)
-    speaking.nowSpeaking = false
+
+    audio.stop()
+    expect(speaking.nowSpeaking).toBe(false)
     dispose()
   })
 })

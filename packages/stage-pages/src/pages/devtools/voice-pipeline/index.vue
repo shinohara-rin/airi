@@ -42,6 +42,7 @@ import SuggestionList from './components/suggestion-list.vue'
 import UncertaintyTimeline from './components/uncertainty-timeline.vue'
 
 import { microphoneChunks, replayChunks } from './composables/audio-chunks'
+import { useElementSpeakingHold } from './composables/speaking-holds'
 import { useBiasComparison } from './composables/use-bias-comparison'
 import { useClipInput } from './composables/use-clip-input'
 import { useConversationTerms } from './composables/use-conversation-terms'
@@ -94,6 +95,8 @@ const input = useClipInput(sampleRate)
 const clipSeconds = computed(() => (input.clip.value?.length ?? 0) / sampleRate)
 const clipBlob = computed(() => input.clip.value ? new Blob([toWav(input.clip.value.buffer, sampleRate)], { type: 'audio/wav' }) : undefined)
 const clipUrl = useObjectUrl(clipBlob)
+/** A running live host can hear the clip through the speakers. It must not take it as a turn. */
+const clipPlayback = useElementSpeakingHold()
 
 // Recognition
 
@@ -265,6 +268,7 @@ const shown = computed(() => {
 const annotation = computed(() => shown.value ? annotate(shown.value) : undefined)
 const shownBlob = computed(() => shown.value ? new Blob([toWav(new Float32Array(shown.value.clip).buffer, sampleRate)], { type: 'audio/wav' }) : undefined)
 const shownUrl = useObjectUrl(shownBlob)
+const shownPlayback = useElementSpeakingHold()
 const player = useTemplateRef<HTMLAudioElement>('player')
 
 /** A span covers the token times. This much audio on each side covers the whole syllables. */
@@ -631,7 +635,7 @@ function compare() {
         {{ input.error.value }}
       </p>
       <div v-if="input.clip.value" :class="['flex flex-wrap items-center gap-4 text-sm']">
-        <audio :src="clipUrl" controls />
+        <audio :src="clipUrl" controls @play="clipPlayback.start" @pause="clipPlayback.end" @ended="clipPlayback.end" @emptied="clipPlayback.end" />
         <span>{{ clipSeconds.toFixed(1) }} s</span>
         <span v-if="turnClip && turnClip.samples === input.clip.value" :class="['text-neutral-500 dark:text-neutral-400']">From {{ turnClip.label }}</span>
         <span v-if="clipSeconds > longClipSeconds" :class="['text-amber-600 dark:text-amber-400']">
@@ -803,7 +807,7 @@ function compare() {
             The decoder emitted tokens about {{ annotation.emissionDelay.toFixed(2) }} s after their syllables, so token times are moved that much earlier.
           </template>
         </div>
-        <audio ref="player" :src="shownUrl" controls />
+        <audio ref="player" :src="shownUrl" controls @play="shownPlayback.start" @pause="shownPlayback.end" @ended="shownPlayback.end" @emptied="shownPlayback.end" />
         <UncertaintyTimeline
           :duration-seconds="shown.durationSeconds"
           :contour="annotation.contour"

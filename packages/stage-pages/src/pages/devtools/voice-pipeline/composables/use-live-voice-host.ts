@@ -6,11 +6,13 @@ import { Playback } from '@proj-airi/pipelines-audio'
 import { useVoiceListening } from '@proj-airi/stage-ui/composables/voice-input-mode'
 import { claimListeningLease, useListeningLeasedElsewhere } from '@proj-airi/stage-ui/composables/voice-listening-lease'
 import { useVoiceResponseOutput } from '@proj-airi/stage-ui/composables/voice-response-output'
-import { useAudioContext, useSpeakingStore } from '@proj-airi/stage-ui/stores/audio'
+import { useAudioContext } from '@proj-airi/stage-ui/stores/audio'
 import { listensContinuously, useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
 import { useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings/audio-device'
 import { useSpeechOutputControlStore } from '@proj-airi/stage-ui/stores/speech-output-control'
 import { computed, effectScope, onScopeDispose, ref, shallowRef, watch } from 'vue'
+
+import { holdSpeaking } from './speaking-holds'
 
 export type LiveVoiceHost = ReturnType<typeof useLiveVoiceHost>
 
@@ -29,7 +31,6 @@ export type LiveVoiceHost = ReturnType<typeof useLiveVoiceHost>
  */
 export function useLiveVoiceHost() {
   const { audioContext } = useAudioContext()
-  const speaking = useSpeakingStore()
   const speechOutputControl = useSpeechOutputControlStore()
   const hearing = useHearingStore()
   const devices = useSettingsAudioDevice()
@@ -62,29 +63,23 @@ export function useLiveVoiceHost() {
           volume.gain.setTargetAtTime(level, audioContext.currentTime, 0.05)
         }, { immediate: true })
 
-        let playing = 0
+        // Clips end in the order they start.
+        const playing: (() => void)[] = []
         const disconnect = useVoiceResponseOutput({
           audioContext,
           playback: new Playback(new BrowserPlayback(audioContext, { destination: volume })),
           windowOnly: true,
           onSpecial: () => {},
-          onPlaybackStart: () => {
-            playing += 1
-            // Voice activity detection reads this, so the reply does not start an input of its own without echo cancellation.
-            speaking.nowSpeaking = true
-          },
-          onPlaybackEnd: () => {
-            playing -= 1
-            if (playing === 0)
-              speaking.nowSpeaking = false
-          },
+          // Voice activity detection reads the speaking flag, so the reply does not start an input of its own without echo cancellation.
+          onPlaybackStart: () => playing.push(holdSpeaking()),
+          onPlaybackEnd: () => playing.shift()?.(),
         })
         useVoiceListening()
 
         onScopeDispose(() => {
           disconnect()
           volume.disconnect()
-          speaking.nowSpeaking = false
+          playing.splice(0).forEach(release => release())
         })
       })
       scope.value = created
