@@ -144,8 +144,13 @@ const listening = computed(() => live.status.value === 'loading' || live.status.
 const decodersInUse = computed(() => busy.value || listening.value)
 
 const selectedModel = computed(() => models.find(candidate => candidate.id === modelId.value))
-/** Encoder noise needs a transducer. Other models fall back to input noise. */
-const noise = computed<ProbeNoise>(() => selectedModel.value?.recognizer === 'transducer' ? run.noise : 'input')
+/** Encoder noise needs a transducer. Other models fall back to input noise, and the select shows the fallback. */
+const noise = computed<ProbeNoise>({
+  get: () => selectedModel.value?.recognizer === 'transducer' ? run.noise : 'input',
+  set: (value) => {
+    run.noise = value
+  },
+})
 const noiseOptions = [
   { value: 'encoder', label: 'Encoder output', description: 'Encodes once and adds noise to the encoder output. Each rollout costs about a tenth of a decode. Transducers only.' },
   { value: 'input', label: 'Input audio', description: 'Adds noise to the audio and decodes each copy again.' },
@@ -311,7 +316,7 @@ onBeforeUnmount(() => recording.value?.abort())
         />
       </fieldset>
       <div :class="['grid gap-4 md:grid-cols-2']">
-        <FieldSelect v-model="run.noise" label="Noise" :options="noiseOptions" :disabled="selectedModel?.recognizer !== 'transducer'" />
+        <FieldSelect v-model="noise" label="Noise" :options="noiseOptions" :disabled="selectedModel?.recognizer !== 'transducer'" />
         <FieldRange v-model="run.count" label="Rollouts" :min="2" :max="64" :step="1" />
         <FieldRange
           v-if="noise === 'encoder'"
