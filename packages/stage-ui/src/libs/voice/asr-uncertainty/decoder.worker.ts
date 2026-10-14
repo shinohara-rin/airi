@@ -123,9 +123,15 @@ function closeSegments(recognizer: OnlineRecognizer, stream: Stream): OpenSegmen
 
 function createStream(recognizer: OnlineRecognizer, rollouts: RolloutSettings | undefined): Stream {
   const stream = recognizer.createStream()
-  if (rollouts)
-    recognizer.attachRollouts(stream, rollouts)
-  return stream
+  try {
+    if (rollouts)
+      recognizer.attachRollouts(stream, rollouts)
+    return stream
+  }
+  catch (error) {
+    stream.free()
+    throw error
+  }
 }
 
 /** Decodes one block. Returns the closed segments when the block reaches an endpoint, and starts the next ones. */
@@ -222,9 +228,16 @@ defineInvokeHandler(context, decoderListen, ({ session, sampleRate, streams, lea
   closeLive()
   const live: LiveState = { session, streams: [], sampleRate, received: 0, level: new InputLevel(sampleRate), leads }
   current.live = live
-  for (const spec of streams) {
-    const recognizer = recognizerFor(spec.blankPenalty)
-    live.streams.push({ recognizer, stream: createStream(recognizer, spec.rollouts), noise: spec.noise && new NoiseStream(spec.noise.snrDb, spec.noise.seed) })
+  try {
+    for (const spec of streams) {
+      const recognizer = recognizerFor(spec.blankPenalty)
+      live.streams.push({ recognizer, stream: createStream(recognizer, spec.rollouts), noise: spec.noise && new NoiseStream(spec.noise.snrDb, spec.noise.seed) })
+    }
+  }
+  catch (error) {
+    // A failed listen returns no session to close, so the streams created so far are freed here.
+    closeLive()
+    throw error
   }
 })
 
