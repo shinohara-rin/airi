@@ -2,13 +2,23 @@ import type { VoiceMessageSnapshot } from '../libs/voice/voice-message'
 
 import { defineInvoke } from '@moeru/eventa'
 import { createPinia, disposePinia } from 'pinia'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h } from 'vue'
 import { createI18n } from 'vue-i18n'
 
 import { LEASE_DISCOVERY_MS } from '../composables/voice-listening-lease'
 import { getSpeechBusContext, voiceListeningLease, voiceMessageCommand, voiceMessagesChanged } from '../services/speech/bus'
 import { useVoiceMessagesStore } from './voice-messages'
+
+// NOTICE:
+// Browser test files run in parallel pages of one origin, and a BroadcastChannel reaches all of them.
+// So a lease of one file stopped recordings of another. This file gets its own speech bus.
+// Remove when browser test files run in separate origins.
+vi.stubGlobal('BroadcastChannel', class extends BroadcastChannel {
+  constructor(name: string) {
+    super(`${name}:voice-messages-test`)
+  }
+})
 
 const cleanups: (() => void)[] = []
 

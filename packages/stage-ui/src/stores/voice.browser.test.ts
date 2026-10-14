@@ -8,6 +8,16 @@ import { useHearingStore } from './modules/hearing'
 import { useVoiceStore } from './voice'
 import { useVoiceMessagesStore } from './voice-messages'
 
+// NOTICE:
+// Browser test files run in parallel pages of one origin, and a BroadcastChannel reaches all of them.
+// So a lease of one file stopped recordings of another. This file gets its own speech bus.
+// Remove when browser test files run in separate origins.
+vi.stubGlobal('BroadcastChannel', class extends BroadcastChannel {
+  constructor(name: string) {
+    super(`${name}:voice-store-test`)
+  }
+})
+
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ locale: { value: 'en' }, t: (key: string) => key }),
 }))

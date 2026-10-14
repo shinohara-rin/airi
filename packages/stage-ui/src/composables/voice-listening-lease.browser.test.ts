@@ -1,9 +1,19 @@
 import { createContext } from '@moeru/eventa/adapters/broadcast-channel'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { effectScope } from 'vue'
 
 import { BUS_CHANNEL_NAME, getSpeechBusContext, voiceListeningLease, voiceListeningLeaseQuery } from '../services/speech/bus'
 import { claimListeningLease, LEASE_DISCOVERY_MS, useListeningLeasedElsewhere } from './voice-listening-lease'
+
+// NOTICE:
+// Browser test files run in parallel pages of one origin, and a BroadcastChannel reaches all of them.
+// So a lease of one file stopped recordings of another. This file gets its own speech bus.
+// Remove when browser test files run in separate origins.
+vi.stubGlobal('BroadcastChannel', class extends BroadcastChannel {
+  constructor(name: string) {
+    super(`${name}:listening-lease-test`)
+  }
+})
 
 function wait(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -96,5 +106,25 @@ describe('useListeningLeasedElsewhere', () => {
     expect(leased.value).toBe(false)
     release()
     stop()
+  })
+
+  // Codex review on PR #30: a diagnostic recording and the devtool host claim the lease in the same window.
+  it('keeps the lease of a window until its last claim is released', async () => {
+    const other = otherWindowBus()
+    const leases: number[] = []
+    const stopWatching = other.bus.on(voiceListeningLease, ({ body }) => body && leases.push(body.until))
+    const releaseHost = claimListeningLease()
+    const releaseRecording = claimListeningLease()
+
+    releaseRecording()
+    releaseRecording()
+    await wait(20)
+    expect(leases.every(until => until > Date.now())).toBe(true)
+
+    releaseHost()
+    await wait(20)
+    expect(leases.at(-1)).toBe(0)
+    stopWatching()
+    other.close()
   })
 })

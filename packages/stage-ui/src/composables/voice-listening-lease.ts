@@ -64,26 +64,48 @@ export function useListeningLeasedElsewhere(): Readonly<Ref<boolean>> {
   return readonly(leased)
 }
 
-/**
- * Asks the voice hosts of other windows to stop listening, and renews the request until the returned function releases it.
- * Closing the window also releases it.
- */
-export function claimListeningLease(): () => void {
+/** Open claims of this window. All claims share the window ID, so the lease ends when the last one is released. */
+let claims = 0
+let endLease: (() => void) | undefined
+
+function startLease() {
   const bus = getSpeechBusContext()
   const renew = () => void bus.emit(voiceListeningLease, { holder: windowId, until: Date.now() + LEASE_MS })
   const timer = setInterval(renew, RENEW_MS)
   const stopAnswering = bus.on(voiceListeningLeaseQuery, renew)
+  let ended = false
+  function end() {
+    if (ended)
+      return
+    ended = true
+    clearInterval(timer)
+    stopAnswering()
+    window.removeEventListener('pagehide', end)
+    void bus.emit(voiceListeningLease, { holder: windowId, until: 0 })
+  }
+  window.addEventListener('pagehide', end)
+  renew()
+  return end
+}
+
+/**
+ * Asks the voice hosts of other windows to stop listening, and renews the request until the returned function releases it.
+ * Claims of one window share one lease, for example the devtool host and a diagnostic recording. The lease ends with the last release.
+ * Closing the window also ends it.
+ */
+export function claimListeningLease(): () => void {
+  claims += 1
+  if (claims === 1)
+    endLease = startLease()
   let released = false
-  function release() {
+  return () => {
     if (released)
       return
     released = true
-    clearInterval(timer)
-    stopAnswering()
-    window.removeEventListener('pagehide', release)
-    void bus.emit(voiceListeningLease, { holder: windowId, until: 0 })
+    claims -= 1
+    if (claims === 0) {
+      endLease?.()
+      endLease = undefined
+    }
   }
-  window.addEventListener('pagehide', release)
-  renew()
-  return release
 }
