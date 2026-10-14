@@ -3,7 +3,7 @@ import type { Ref } from 'vue'
 import { nanoid } from 'nanoid/non-secure'
 import { onScopeDispose, readonly, ref } from 'vue'
 
-import { getSpeechBusContext, voiceListeningLease } from '../services/speech/bus'
+import { getSpeechBusContext, voiceListeningLease, voiceListeningLeaseQuery } from '../services/speech/bus'
 
 /**
  * A lease lasts this long without renewal. Browsers can delay the timers of a hidden page to once a minute,
@@ -16,8 +16,8 @@ const RENEW_MS = 5_000
 const windowId = nanoid()
 
 /**
- * Tells if another window holds a listening lease now. A window that opens later learns the lease at its next renewal.
- * Scope disposal stops the observation.
+ * Tells if another window holds a listening lease now. It asks the holders to renew at once, so a window that opens
+ * while another window holds a lease learns it before its microphone opens. Scope disposal stops the observation.
  */
 export function useListeningLeasedElsewhere(): Readonly<Ref<boolean>> {
   const leases = new Map<string, number>()
@@ -36,12 +36,14 @@ export function useListeningLeasedElsewhere(): Readonly<Ref<boolean>> {
       expiry = setTimeout(update, Math.min(...leases.values()) - now)
   }
 
-  const stop = getSpeechBusContext().on(voiceListeningLease, ({ body }) => {
+  const bus = getSpeechBusContext()
+  const stop = bus.on(voiceListeningLease, ({ body }) => {
     if (!body || body.holder === windowId)
       return
     leases.set(body.holder, body.until)
     update()
   })
+  bus.emit(voiceListeningLeaseQuery, undefined)
   onScopeDispose(() => {
     stop()
     clearTimeout(expiry)
@@ -58,12 +60,14 @@ export function claimListeningLease(): () => void {
   const bus = getSpeechBusContext()
   const renew = () => void bus.emit(voiceListeningLease, { holder: windowId, until: Date.now() + LEASE_MS })
   const timer = setInterval(renew, RENEW_MS)
+  const stopAnswering = bus.on(voiceListeningLeaseQuery, renew)
   let released = false
   function release() {
     if (released)
       return
     released = true
     clearInterval(timer)
+    stopAnswering()
     window.removeEventListener('pagehide', release)
     void bus.emit(voiceListeningLease, { holder: windowId, until: 0 })
   }

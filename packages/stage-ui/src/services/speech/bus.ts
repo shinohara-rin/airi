@@ -155,6 +155,9 @@ export const voiceLevelMonitor = defineEventa<{ until: number }>('eventa:voice:l
  */
 export const voiceListeningLease = defineEventa<{ holder: string, until: number }>('eventa:voice:listening-lease')
 
+/** Asks the holders of a listening lease to renew it now, so a window that opens learns the lease at once. */
+export const voiceListeningLeaseQuery = defineEventa('eventa:voice:listening-lease-query')
+
 /** Recording commands address one session-owned voice message draft. */
 export type VoiceMessageCommand
   = {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { effectScope } from 'vue'
 
-import { getSpeechBusContext, voiceListeningLease } from '../services/speech/bus'
+import { getSpeechBusContext, voiceListeningLease, voiceListeningLeaseQuery } from '../services/speech/bus'
 import { claimListeningLease, useListeningLeasedElsewhere } from './voice-listening-lease'
 
 function observe() {
@@ -20,6 +20,33 @@ describe('useListeningLeasedElsewhere', () => {
     getSpeechBusContext().emit(voiceListeningLease, { holder: 'other-window', until: 0 })
     expect(leased.value).toBe(false)
     stop()
+  })
+
+  // Codex review on PR #30: a window that opened during a lease listened until the next renewal.
+  it('learns a lease of another window as soon as it starts', () => {
+    const bus = getSpeechBusContext()
+    const stopHolder = bus.on(voiceListeningLeaseQuery, () => bus.emit(voiceListeningLease, { holder: 'holding-window', until: Date.now() + 60_000 }))
+
+    const { leased, stop } = observe()
+    expect(leased.value).toBe(true)
+
+    stopHolder()
+    bus.emit(voiceListeningLease, { holder: 'holding-window', until: 0 })
+    stop()
+  })
+
+  it('renews its own lease when another window asks', () => {
+    const bus = getSpeechBusContext()
+    const renewals: number[] = []
+    const stopWatching = bus.on(voiceListeningLease, ({ body }) => body && renewals.push(body.until))
+    const release = claimListeningLease()
+    renewals.length = 0
+
+    bus.emit(voiceListeningLeaseQuery, undefined)
+    expect(renewals).toHaveLength(1)
+
+    release()
+    stopWatching()
   })
 
   it('ends a lease that is not renewed', async () => {
