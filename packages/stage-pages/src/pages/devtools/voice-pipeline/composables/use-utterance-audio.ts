@@ -1,6 +1,7 @@
 import type { Position } from '@proj-airi/pipelines-audio'
 
 import { toWav } from '@proj-airi/audio/encoding'
+import { useSpeakingStore } from '@proj-airi/stage-ui/stores/audio'
 import { useVoiceStore } from '@proj-airi/stage-ui/stores/voice'
 import { onScopeDispose, shallowReactive, shallowRef } from 'vue'
 
@@ -27,10 +28,13 @@ function concat(parts: readonly Float32Array[]) {
  *
  * A copy of the input audio is read from the capture start while the input captures, so it is the audio that speech
  * recognition receives. The copy stops when the capture ends, so it never keeps the microphone open.
+ * Playback counts as speech of the character, as reply audio does, so the host does not take it as a new turn
+ * without echo cancellation.
  * Scope disposal stops the copies and the playback.
  */
 export function useUtteranceAudio() {
   const voice = useVoiceStore()
+  const speaking = useSpeakingStore()
   const utterances = shallowReactive(new Map<string, UtteranceAudio>())
   const playing = shallowRef<HTMLAudioElement>()
   const copies = new Set<AbortController>()
@@ -79,9 +83,12 @@ export function useUtteranceAudio() {
     void attempt.done.then(() => stopState())
   })
 
+  /** Ends the current playback. The pause event comes later, so the release runs here, before a next playback marks speech. */
+  let releasePlaying: (() => void) | undefined
+
   function stop() {
     playing.value?.pause()
-    playing.value = undefined
+    releasePlaying?.()
   }
 
   /** Plays the utterance of an input. Returns false when the input has no audio, for example after a reload. */
@@ -93,14 +100,27 @@ export function useUtteranceAudio() {
     stop()
     const url = URL.createObjectURL(new Blob([toWav(utterance.samples.buffer, utterance.sampleRate)], { type: 'audio/wav' }))
     const element = new Audio(url)
+    // A reply that plays already owns the flag, and its end clears it.
+    const marksSpeech = !speaking.nowSpeaking
+    if (marksSpeech)
+      speaking.nowSpeaking = true
+    let released = false
     const release = () => {
+      if (released)
+        return
+      released = true
       URL.revokeObjectURL(url)
+      if (marksSpeech)
+        speaking.nowSpeaking = false
       if (playing.value === element)
         playing.value = undefined
+      if (releasePlaying === release)
+        releasePlaying = undefined
     }
     element.addEventListener('ended', release, { once: true })
     element.addEventListener('pause', release, { once: true })
     playing.value = element
+    releasePlaying = release
     void element.play().catch(release)
     return true
   }

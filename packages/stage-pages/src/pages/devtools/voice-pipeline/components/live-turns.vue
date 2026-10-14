@@ -51,6 +51,8 @@ const clip = useClipInput(sampleRate)
 const replay = useClipReplay()
 /** A recorder of this page uses the microphone. The host must not start or change how it listens, or it takes that speech too. */
 const diagnosticRecording = computed(() => microphoneBusy || !!clip.recording.value)
+/** A recording or a replay runs. The replay keeps the input mode of its start, so the listening settings must not change. */
+const inputLocked = computed(() => diagnosticRecording.value || !!replay.replaying.value)
 
 // The button sees no pointer release after the page loses focus, so the hold is cancelled then, as for the hold key.
 useEventListener(window, 'blur', () => pushToTalk.cancel('Page lost focus during the hold'))
@@ -192,14 +194,14 @@ function selectTurn(turnId: string) {
     </Callout>
 
     <div :class="['grid gap-4 md:grid-cols-2']">
-      <FieldSelect v-model="inputMode" label="Input mode" :options="inputModeOptions" :disabled="diagnosticRecording" />
+      <FieldSelect v-model="inputMode" label="Input mode" :options="inputModeOptions" :disabled="inputLocked" />
       <FieldCheckbox
         v-model="microphoneEnabled"
         label="Microphone input"
-        :description="diagnosticRecording
-          ? 'Stop the recording first. A change here can make the host listen to the speech that is being recorded.'
+        :description="inputLocked
+          ? 'Stop the recording or the replay first. A change here changes how the host listens while they run.'
           : 'The microphone stays open in Always on and Wake word mode. In Push to Talk mode, it opens only while you hold the button.'"
-        :disabled="diagnosticRecording"
+        :disabled="inputLocked"
       />
       <FieldCheckbox
         v-model="autoSendEnabled"
@@ -219,7 +221,7 @@ function selectTurn(turnId: string) {
         v-if="inputMode !== 'always-on'"
         icon="i-solar:microphone-3-bold-duotone"
         :label="pushToTalk.held.value ? 'Release to send' : 'Hold to talk'"
-        :disabled="!host.running.value || !pushToTalk.enabled.value || diagnosticRecording"
+        :disabled="!host.running.value || !pushToTalk.enabled.value || inputLocked"
         @pointerdown="pushToTalk.press()"
         @pointerup="pushToTalk.release()"
         @pointerleave="pushToTalk.release()"
