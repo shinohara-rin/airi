@@ -44,7 +44,7 @@ describe.runIf(process.env.AIRI_TEST_E5_RERANK)('createSemanticReranker with mul
   ])('chooses $expected for "$text"', async ({ history, text, span, terms, expected }) => {
     const rerank = createSemanticReranker({ embedder: await createE5Embedder(), history: () => [history], budgetMs: 60_000 })
 
-    const [first] = await rerank({ text, candidates: candidatesFor(text, span, terms) }, new AbortController().signal)
+    const [first] = await rerank({ text, candidates: candidatesFor(text, span, terms), sessionId: 'alice' }, new AbortController().signal)
 
     expect(first.candidate).toBe(expected)
   }, 120_000)

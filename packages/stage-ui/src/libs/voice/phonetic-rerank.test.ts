@@ -43,7 +43,7 @@ describe('createSemanticReranker', () => {
   it('puts the candidate that fits the conversation first when the sounds are a near tie', async () => {
     const rerank = createSemanticReranker({ embedder: createFakeEmbedder(), history: () => ['The microphone heard my speech wrong again.'] })
 
-    const ranked = await rerank({ text, candidates }, new AbortController().signal)
+    const ranked = await rerank({ text, candidates, sessionId: 'alice' }, new AbortController().signal)
 
     expect(ranked.map(candidate => candidate.term)).toEqual(['recognition', 'reconciliation', 'resignation'])
   })
@@ -51,7 +51,7 @@ describe('createSemanticReranker', () => {
   it('keeps a clear phonetic winner against a weak topic signal', async () => {
     const rerank = createSemanticReranker({ embedder: createFakeEmbedder(), history: () => ['The microphone heard my speech wrong again.'], weight: 0.01 })
 
-    const ranked = await rerank({ text, candidates }, new AbortController().signal)
+    const ranked = await rerank({ text, candidates, sessionId: 'alice' }, new AbortController().signal)
 
     expect(ranked.map(candidate => candidate.term)).toEqual(['reconciliation', 'recognition', 'resignation'])
   })
@@ -60,17 +60,39 @@ describe('createSemanticReranker', () => {
     const embedder = createFakeEmbedder()
     const rerank = createSemanticReranker({ embedder, history: () => ['first message', 'second message'] })
 
-    await rerank({ text, candidates: [{ ...reconciliation, candidate: '对账', term: 'reconciliation' }, recognition] }, new AbortController().signal)
+    await rerank({ text, candidates: [{ ...reconciliation, candidate: '对账', term: 'reconciliation' }, recognition], sessionId: 'alice' }, new AbortController().signal)
 
     expect(embedder.queries).toEqual(['first message\nsecond message\nI am doing the ___ now'])
     expect(embedder.passages).toEqual(['对账 (reconciliation): Matching ledger entries against a bank statement.', 'recognition: Identifying speech heard by a microphone.'])
+  })
+
+  it('reads the history of the input session', async () => {
+    const history = vi.fn((sessionId: string) => [`messages of ${sessionId}`])
+    const embedder = createFakeEmbedder()
+    const rerank = createSemanticReranker({ embedder, history })
+
+    await rerank({ text, candidates, sessionId: 'bob' }, new AbortController().signal)
+
+    expect(history).toHaveBeenCalledWith('bob')
+    expect(embedder.queries).toEqual(['messages of bob\nI am doing the ___ now'])
+  })
+
+  it('embeds one query for each group of overlapping spans', async () => {
+    const embedder = createFakeEmbedder()
+    const rerank = createSemanticReranker({ embedder, history: () => [] })
+    const longer = { ...resignation, span: 'resilation now', end: 29 }
+    const later: PhoneticCandidate = { ...recognition, span: 'I', start: 0, end: 1 }
+
+    await rerank({ text, candidates: [reconciliation, longer, later], sessionId: 'alice' }, new AbortController().signal)
+
+    expect(embedder.queries).toEqual(['___ am doing the resilation now', 'I am doing the ___'])
   })
 
   it('keeps only the end of a long history', async () => {
     const embedder = createFakeEmbedder()
     const rerank = createSemanticReranker({ embedder, history: () => ['old topic', 'new topic'], historyChars: 9 })
 
-    await rerank({ text, candidates }, new AbortController().signal)
+    await rerank({ text, candidates, sessionId: 'alice' }, new AbortController().signal)
 
     expect(embedder.queries).toEqual(['new topic\nI am doing the ___ now'])
   })
@@ -79,8 +101,8 @@ describe('createSemanticReranker', () => {
     const embedder = createFakeEmbedder()
     const rerank = createSemanticReranker({ embedder, history: () => [] })
 
-    await rerank({ text, candidates }, new AbortController().signal)
-    await rerank({ text, candidates }, new AbortController().signal)
+    await rerank({ text, candidates, sessionId: 'alice' }, new AbortController().signal)
+    await rerank({ text, candidates, sessionId: 'alice' }, new AbortController().signal)
 
     expect(embedder.passages).toHaveLength(3)
     expect(embedder.queries).toEqual([text.replace('resilation', '___'), text.replace('resilation', '___')])
@@ -90,7 +112,7 @@ describe('createSemanticReranker', () => {
     const embedder = createFakeEmbedder()
     const rerank = createSemanticReranker({ embedder, history: () => ['The microphone heard my speech wrong again.'] })
 
-    const ranked = await rerank({ text, candidates: [reconciliation] }, new AbortController().signal)
+    const ranked = await rerank({ text, candidates: [reconciliation], sessionId: 'alice' }, new AbortController().signal)
 
     expect(ranked).toEqual([reconciliation])
     expect(embedder.queries).toEqual([])
@@ -100,7 +122,7 @@ describe('createSemanticReranker', () => {
     const pending = new Promise<readonly number[]>(() => {})
     const rerank = createSemanticReranker({ embedder: { embedQuery: () => pending, embedPassage: () => pending }, history: () => [], budgetMs: 5 })
 
-    const ranked = await rerank({ text, candidates }, new AbortController().signal)
+    const ranked = await rerank({ text, candidates, sessionId: 'alice' }, new AbortController().signal)
 
     expect(ranked).toBe(candidates)
   })
@@ -112,8 +134,8 @@ describe('createSemanticReranker', () => {
       .mockImplementation(async passage => topicVector(passage))
     const rerank = createSemanticReranker({ embedder: { embedQuery: async query => topicVector(query), embedPassage }, history: () => ['microphone speech'] })
 
-    const first = await rerank({ text, candidates }, new AbortController().signal)
-    const second = await rerank({ text, candidates }, new AbortController().signal)
+    const first = await rerank({ text, candidates, sessionId: 'alice' }, new AbortController().signal)
+    const second = await rerank({ text, candidates, sessionId: 'alice' }, new AbortController().signal)
 
     expect(first).toBe(candidates)
     expect(warn).toHaveBeenCalledWith('[phonetic-rerank] Kept the phonetic order:', 'model download failed')
@@ -127,7 +149,7 @@ describe('createSemanticReranker', () => {
     const rerank = createSemanticReranker({ embedder: { embedQuery: () => pending, embedPassage: () => pending }, history: () => [], budgetMs: 60_000 })
     const controller = new AbortController()
 
-    const ranked = rerank({ text, candidates }, controller.signal)
+    const ranked = rerank({ text, candidates, sessionId: 'alice' }, controller.signal)
     controller.abort()
 
     await expect(ranked).resolves.toBe(candidates)

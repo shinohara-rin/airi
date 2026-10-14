@@ -1,4 +1,5 @@
 import type { PhoneticCandidate } from './phonetic-match'
+import type { PhoneticRerankRequest } from './voice-phonetic-match-plugin'
 
 import { errorMessageFrom, merge } from '@moeru/std'
 
@@ -14,10 +15,10 @@ export interface SemanticEmbedder {
 export interface SemanticRerankOptions {
   embedder: SemanticEmbedder
   /**
-   * Reads the recent conversation when an input reranks, oldest message first.
+   * Reads the recent conversation of a session when an input reranks, oldest message first.
    * The newest messages carry the topic, so the reranker keeps the end of this text when it is too long.
    */
-  history: () => readonly string[]
+  history: (sessionId: string) => readonly string[]
   /**
    * How far meaning can move a candidate against its phonetic score.
    * A candidate gains `weight * (similarity - mean similarity of the pool)`.
@@ -45,6 +46,22 @@ const defaultOptions: Omit<SemanticRerankOptions, 'embedder' | 'history'> = { we
 /** Replaces the heard span, so the query does not favor a term that only shares spelling with the mishearing. */
 const MASK = '___'
 
+/** Merges candidates whose transcript spans overlap. Each group covers the union of its spans. */
+function overlapGroups(candidates: readonly PhoneticCandidate[]) {
+  const groups: { start: number, end: number, members: PhoneticCandidate[] }[] = []
+  for (const candidate of [...candidates].sort((a, b) => a.start - b.start)) {
+    const last = groups.at(-1)
+    if (last && candidate.start < last.end) {
+      last.end = Math.max(last.end, candidate.end)
+      last.members.push(candidate)
+    }
+    else {
+      groups.push({ start: candidate.start, end: candidate.end, members: [candidate] })
+    }
+  }
+  return groups
+}
+
 function dot(a: readonly number[], b: readonly number[]) {
   let sum = 0
   for (let i = 0; i < a.length; i++)
@@ -56,7 +73,8 @@ function dot(a: readonly number[], b: readonly number[]) {
  * Creates a `rerank` hook for the phonetic match plugin that orders candidates by meaning as well as by sound.
  *
  * Sound alone cannot choose between near ties, for example `reconciliation` and `recognition` for `resilation`.
- * For each heard span, the query is the recent conversation plus the transcript with that span masked.
+ * For each group of overlapping heard spans, the query is the recent conversation plus the transcript with the group masked.
+ * Candidates that overlap are readings of the same audio, so they share one query, and few groups mean few embeddings.
  * Each candidate is a passage of its written form, its term, and its description.
  * The reranker moves each candidate by how much better than the pool average its passage fits the query.
  *
@@ -82,18 +100,18 @@ export function createSemanticReranker(options: Pick<SemanticRerankOptions, 'emb
     return embedding
   }
 
-  async function score(text: string, candidates: readonly PhoneticCandidate[]) {
-    const context = history().join('\n').slice(-historyChars)
-    const queries = new Map<string, Promise<readonly number[]>>()
+  async function score({ text, candidates, sessionId }: PhoneticRerankRequest) {
+    const context = history(sessionId).join('\n').slice(-historyChars)
+    const queries = new Map<PhoneticCandidate, Promise<readonly number[]>>()
+    for (const group of overlapGroups(candidates)) {
+      const masked = `${text.slice(0, group.start)}${MASK}${text.slice(group.end)}`
+      const query = embedder.embedQuery(context ? `${context}\n${masked}` : masked)
+      for (const candidate of group.members)
+        queries.set(candidate, query)
+    }
     const similarities = await Promise.all(candidates.map(async (candidate) => {
-      const masked = `${text.slice(0, candidate.start)}${MASK}${text.slice(candidate.end)}`
-      let query = queries.get(masked)
-      if (!query) {
-        query = embedder.embedQuery(context ? `${context}\n${masked}` : masked)
-        queries.set(masked, query)
-      }
       const label = candidate.candidate === candidate.term ? candidate.candidate : `${candidate.candidate} (${candidate.term})`
-      const [queryEmbedding, passageEmbedding] = await Promise.all([query, embedPassage(`${label}: ${candidate.description}`)])
+      const [queryEmbedding, passageEmbedding] = await Promise.all([queries.get(candidate)!, embedPassage(`${label}: ${candidate.description}`)])
       return dot(queryEmbedding, passageEmbedding)
     }))
 
@@ -104,12 +122,12 @@ export function createSemanticReranker(options: Pick<SemanticRerankOptions, 'emb
       .map(({ candidate }) => candidate)
   }
 
-  return async (request: { readonly text: string, readonly candidates: readonly PhoneticCandidate[] }, signal: AbortSignal): Promise<readonly PhoneticCandidate[]> => {
+  return async (request: PhoneticRerankRequest, signal: AbortSignal): Promise<readonly PhoneticCandidate[]> => {
     // One candidate has nothing to reorder against.
     if (request.candidates.length < 2)
       return request.candidates
 
-    const scored = score(request.text, request.candidates)
+    const scored = score(request)
     let timer: ReturnType<typeof setTimeout> | undefined
     const fallback = new Promise<readonly PhoneticCandidate[]>((resolve) => {
       timer = setTimeout(resolve, budgetMs, request.candidates)
