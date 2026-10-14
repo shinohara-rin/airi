@@ -2,6 +2,7 @@ import type { createEmbedProvider } from '@xsai-transformers/embed'
 
 import type { SemanticEmbedder } from './phonetic-rerank'
 
+import { errorMessageFrom } from '@moeru/std'
 import { Mutex } from 'async-mutex'
 
 /**
@@ -26,7 +27,7 @@ interface LoadState {
  *
  * State:
  * - The Worker and the model load on the first embedding, not at construction.
- * - A failed load terminates its Worker and stays failed, so each later embedding rejects at once instead of starting
+ * - A failed load logs a warning, terminates its Worker, and stays failed, so each later embedding rejects at once instead of starting
  *   another 120 MB download. {@link dispose} clears it, and the next embedding loads again.
  * - Embeddings run one at a time, because the Worker holds one ONNX session. An embedding whose signal aborted while it
  *   waited in the queue does not run.
@@ -94,6 +95,9 @@ async function loadProvider(state: LoadState): Promise<EmbedProvider> {
   }
   catch (error) {
     provider.terminateEmbed()
+    // The reranker warns on each input, so this one warning names the cause and the way out.
+    if (!state.disposed)
+      console.warn('[multilingual-e5] The model did not load. Term suggestions keep the phonetic order until the setting is turned off and on again:', errorMessageFrom(error) ?? 'unknown error')
     throw error
   }
   if (state.disposed)
