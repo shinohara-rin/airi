@@ -1,11 +1,11 @@
 import type { IOTurn } from '@proj-airi/stage-shared'
 
-import { IOSpanNames, IOSubsystems } from '@proj-airi/stage-shared'
+import { IOEvents, IOSpanNames, IOSubsystems } from '@proj-airi/stage-shared'
 
 /**
  * The moments of one spoken turn, in milliseconds since the epoch. A missing field means the turn has no such moment yet.
  *
- * - `speechEndTs`: the end of the last speech segment that VAD found.
+ * - `speechEndTs`: the end of the last speech segment that VAD found. Push to Talk has no VAD, so it is the capture end.
  * - `transcriptTs`: the end of the last speech recognition request, when the final transcript exists.
  * - `firstTokenTs`: the first token of the reply.
  * - `firstAudioTs`: the start of the first reply audio.
@@ -51,7 +51,7 @@ export function voiceTurnTiming(turn: IOTurn): VoiceTurnTiming {
   const voiceInput = turn.spans.find(span => span.name === IOSpanNames.VoiceInput)
 
   return {
-    speechEndTs: maxOf(ended(IOSubsystems.VAD)),
+    speechEndTs: maxOf(ended(IOSubsystems.VAD)) ?? voiceInput?.events?.find(event => event.name === IOEvents.VoiceCaptureEnd)?.timeTs,
     transcriptTs: maxOf(ended(IOSubsystems.ASR)),
     firstTokenTs: minOf(turn.spans.flatMap(span => span.subsystem === IOSubsystems.LLM && typeof span.meta.firstTokenTs === 'number' ? [span.meta.firstTokenTs] : [])),
     firstAudioTs: minOf(turn.spans.filter(span => span.subsystem === IOSubsystems.Playback).map(span => span.startTs)),

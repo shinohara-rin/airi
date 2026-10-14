@@ -1,6 +1,6 @@
 import type { IOSpan, IOTurn } from '@proj-airi/stage-shared'
 
-import { IOSpanNames, IOSubsystems } from '@proj-airi/stage-shared'
+import { IOEvents, IOSpanNames, IOSubsystems } from '@proj-airi/stage-shared'
 import { describe, expect, it } from 'vitest'
 
 import { isSpokenTurn, voiceInputIdOf, voiceTurnLatency, voiceTurnTiming } from './turn-timing'
@@ -38,6 +38,20 @@ describe('voiceTurnTiming', () => {
     expect(voiceTurnLatency(voiceTurnTiming(listening))).toEqual({ transcriptMs: undefined, firstTokenMs: undefined, firstAudioMs: undefined })
     expect(isSpokenTurn(listening)).toBe(false)
     expect(isSpokenTurn(spoken)).toBe(true)
+  })
+
+  // Codex review on PR #30: Push to Talk runs no VAD, so its latency columns were always empty.
+  it('measures a Push to Talk turn from the end of its capture', () => {
+    const captureEnd = { name: IOEvents.VoiceCaptureEnd, timeTs: 2500, meta: {} }
+    const pushToTalk: IOTurn = {
+      id: 'trace',
+      startTs: 1000,
+      spans: spoken.spans.slice(2).map(item => item.name === IOSpanNames.VoiceInput ? { ...item, events: [captureEnd] } : item),
+    }
+
+    expect(voiceTurnTiming(pushToTalk).speechEndTs).toBe(2500)
+    // VAD finds the speech end inside the capture, so it wins when it exists.
+    expect(voiceTurnTiming({ ...pushToTalk, spans: [...spoken.spans.slice(0, 2), ...pushToTalk.spans] }).speechEndTs).toBe(2400)
   })
 
   it('measures nothing without a speech end, as for a typed turn', () => {
