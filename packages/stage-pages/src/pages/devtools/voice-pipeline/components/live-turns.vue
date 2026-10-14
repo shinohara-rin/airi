@@ -48,6 +48,8 @@ const { enabled: microphoneEnabled } = storeToRefs(devices)
 const pushToTalk = useVoicePushToTalk()
 const clip = useClipInput(sampleRate)
 const replay = useClipReplay()
+/** A recorder of this page uses the microphone. The host must not start or change how it listens, or it takes that speech too. */
+const diagnosticRecording = computed(() => microphoneBusy || !!clip.recording.value)
 
 // The button sees no pointer release after the page loses focus, so the hold is cancelled then, as for the hold key.
 useEventListener(window, 'blur', () => pushToTalk.cancel('Page lost focus during the hold'))
@@ -163,11 +165,11 @@ function selectTurn(turnId: string) {
         variant="primary"
         icon="i-solar:play-bold"
         label="Start the voice host"
-        :disabled="microphoneBusy || !!clip.recording.value"
+        :disabled="diagnosticRecording"
         @click="host.start()"
       />
       <Button v-else icon="i-solar:stop-bold" label="Stop the voice host" @click="stopHost()" />
-      <span v-if="!host.running.value && (microphoneBusy || clip.recording.value)" :class="['text-sm text-neutral-500 dark:text-neutral-400']">
+      <span v-if="!host.running.value && diagnosticRecording" :class="['text-sm text-neutral-500 dark:text-neutral-400']">
         Stop the microphone recording first, because the host takes that speech as a turn too.
       </span>
       <span v-if="host.running.value" :class="['text-sm text-neutral-500 dark:text-neutral-400']">
@@ -182,11 +184,14 @@ function selectTurn(turnId: string) {
     </Callout>
 
     <div :class="['grid gap-4 md:grid-cols-2']">
-      <FieldSelect v-model="inputMode" label="Input mode" :options="inputModeOptions" />
+      <FieldSelect v-model="inputMode" label="Input mode" :options="inputModeOptions" :disabled="diagnosticRecording" />
       <FieldCheckbox
         v-model="microphoneEnabled"
         label="Microphone input"
-        description="The microphone stays open in Always on and Wake word mode. In Push to Talk mode, it opens only while you hold the button."
+        :description="diagnosticRecording
+          ? 'Stop the recording first. A change here can make the host listen to the speech that is being recorded.'
+          : 'The microphone stays open in Always on and Wake word mode. In Push to Talk mode, it opens only while you hold the button.'"
+        :disabled="diagnosticRecording"
       />
       <FieldCheckbox
         v-model="autoSendEnabled"
@@ -208,7 +213,7 @@ function selectTurn(turnId: string) {
         v-if="inputMode !== 'always-on'"
         icon="i-solar:microphone-3-bold-duotone"
         :label="pushToTalk.held.value ? 'Release to send' : 'Hold to talk'"
-        :disabled="!host.running.value || !pushToTalk.enabled.value || microphoneBusy || !!clip.recording.value"
+        :disabled="!host.running.value || !pushToTalk.enabled.value || diagnosticRecording"
         @pointerdown="pushToTalk.press()"
         @pointerup="pushToTalk.release()"
         @pointerleave="pushToTalk.release()"

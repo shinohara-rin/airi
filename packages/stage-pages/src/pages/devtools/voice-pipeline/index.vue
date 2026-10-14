@@ -33,7 +33,7 @@ import { useProviderConfigStore } from '@proj-airi/stage-ui/stores/providers/con
 import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
 import { Button, Callout, FieldCheckbox, FieldInputFile, FieldRange, FieldSelect, FieldTextArea, Input, Progress } from '@proj-airi/ui'
 import { useObjectUrl } from '@vueuse/core'
-import { computed, reactive, ref, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, onScopeDispose, reactive, ref, shallowRef, useTemplateRef, watch } from 'vue'
 
 import DecodeDetails from './components/decode-details.vue'
 import LiveTurns from './components/live-turns.vue'
@@ -278,22 +278,28 @@ function play(start: number, end?: number) {
     return
   const request = ++playRequest
   element.currentTime = Math.max(0, start - (end === undefined ? 0 : SPAN_PLAYBACK_MARGIN_SECONDS))
-  void element.play().catch(() => {})
-  if (end === undefined)
+  const started = element.play()
+  if (end === undefined) {
+    void started.catch(() => {})
     return
+  }
 
   // The check reads the audio position, not the wall clock, so a slow start or a slow audio clock stops on time.
+  // It ends when playback pauses or ends, when a later request plays, or when the page closes.
   const stopAt = end + SPAN_PLAYBACK_MARGIN_SECONDS
   const check = () => {
-    if (request !== playRequest)
+    if (request !== playRequest || element.paused || element.ended)
       return
     if (element.currentTime >= stopAt)
       element.pause()
-    else if (!element.ended)
+    else
       requestAnimationFrame(check)
   }
-  requestAnimationFrame(check)
+  void started.then(check, () => {})
 }
+
+// Closing the page ends a running span check.
+onScopeDispose(() => playRequest++)
 
 // Hotword boost
 
