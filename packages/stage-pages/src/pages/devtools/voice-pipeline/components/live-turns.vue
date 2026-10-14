@@ -2,6 +2,7 @@
 import type { IOSubsystem } from '@proj-airi/stage-shared'
 
 import type { LiveVoiceHost } from '../composables/use-live-voice-host'
+import type { UtteranceAudio } from '../composables/use-utterance-audio'
 
 import { useVoicePushToTalk } from '@proj-airi/stage-ui/composables/voice-input-mode'
 import { getSpeechBusContext, voiceInputLevel } from '@proj-airi/stage-ui/services/speech/bus'
@@ -27,6 +28,11 @@ const { host, microphoneBusy } = defineProps<{
   host: LiveVoiceHost
   /** The offline lab records from the microphone now. A host that starts then also takes that speech. */
   microphoneBusy: boolean
+}>()
+
+const emit = defineEmits<{
+  /** A selected turn has audio. The page offers it to the offline lab as the clip. */
+  selectUtterance: [utterance: UtteranceAudio, label: string]
 }>()
 
 /** The voice pipeline runs at 16 kHz, so a replayed clip is converted to it once, when it loads. */
@@ -114,15 +120,25 @@ function formatTime(ts: number) {
 }
 
 const utterances = useUtteranceAudio()
+const playbackNote = ref<string>()
 
-/** Selects a span. A span of a spoken turn also plays the utterance of that turn. */
+/** Selects a span. A span of a spoken turn also plays the utterance of that turn and sends it to the offline lab. */
 function selectSpan(spanId: string | null) {
   tracer.selectSpan(spanId)
   utterances.stop()
+  playbackNote.value = undefined
   const turn = spanId ? turns.value.find(candidate => candidate.spans.some(span => span.id === spanId)) : undefined
   const inputId = turn && voiceInputIdOf(turn)
-  if (inputId)
-    utterances.play(inputId)
+  if (!turn || !inputId)
+    return
+
+  const utterance = utterances.utterances.get(inputId)
+  if (!utterance) {
+    playbackNote.value = 'This turn has no audio on this page. Only turns that this page captured have audio, not turns of another window or from before the page opened.'
+    return
+  }
+  utterances.play(inputId)
+  emit('selectUtterance', utterance, `the turn at ${formatTime(turn.startTs)}`)
 }
 
 function selectTurn(turnId: string) {
@@ -146,8 +162,8 @@ function selectTurn(turnId: string) {
         v-if="!host.running.value"
         variant="primary"
         icon="i-solar:play-bold"
-        :label="host.starting.value ? 'Looking for another voice host...' : 'Start the voice host'"
-        :disabled="host.starting.value || microphoneBusy || !!clip.recording.value"
+        label="Start the voice host"
+        :disabled="microphoneBusy || !!clip.recording.value"
         @click="host.start()"
       />
       <Button v-else icon="i-solar:stop-bold" label="Stop the voice host" @click="stopHost()" />
@@ -155,7 +171,7 @@ function selectTurn(turnId: string) {
         Stop the microphone recording first, because the host takes that speech as a turn too.
       </span>
       <span v-if="host.running.value" :class="['text-sm text-neutral-500 dark:text-neutral-400']">
-        This page listens and plays the replies now. Leaving the page stops the host.
+        This page listens and plays the replies now. Other windows, such as the main window, stop listening until this host stops. Leaving the page stops the host.
       </span>
     </div>
     <Callout v-if="host.error.value" theme="orange" label="The voice host could not start">
@@ -226,7 +242,7 @@ function selectTurn(turnId: string) {
           </template>
         </div>
         <div>
-          <Button v-if="!clip.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="host.starting.value || host.takesSpeech.value" @click="clip.record" />
+          <Button v-if="!clip.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="host.takesSpeech.value" @click="clip.record" />
           <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="clip.stop" />
         </div>
       </div>
@@ -272,7 +288,11 @@ function selectTurn(turnId: string) {
         <Button size="sm" label="Clear" :disabled="!turns.length" @click="tracer.clear()" />
       </div>
       <p :class="['text-xs text-neutral-500 dark:text-neutral-400']">
-        Click a row or a span of a spoken turn to play what the speech recognition heard. Swipe up and down to scroll the timeline. Pinch, or hold Ctrl and scroll, to zoom.
+        Click a row or a span of a spoken turn to play what the speech recognition heard. It also becomes the clip of the offline lab below.
+        Swipe up and down to scroll the timeline. Pinch, or hold Ctrl and scroll, to zoom.
+      </p>
+      <p v-if="playbackNote" :class="['text-xs text-amber-600 dark:text-amber-400']">
+        {{ playbackNote }}
       </p>
       <table v-if="spokenTurns.length" :class="['w-full text-left text-sm']">
         <thead :class="['text-xs text-neutral-500 dark:text-neutral-400']">

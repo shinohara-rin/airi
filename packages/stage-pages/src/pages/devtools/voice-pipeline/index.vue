@@ -4,6 +4,7 @@ import type { VocabularyPack } from '@proj-airi/stage-ui/libs/voice/phonetic-voc
 import type { GuidedScope } from '@proj-airi/stage-ui/libs/voice/span-guided-terms'
 
 import type { ProbeRunSettings } from './composables/use-uncertainty-probe'
+import type { UtteranceAudio } from './composables/use-utterance-audio'
 
 import { toWav } from '@proj-airi/audio/encoding'
 import { acceptsHotwords, SHERPAW_TRANSCRIPTION_PROVIDER_ID, sherpawModels, xAsrBilingualZhEnInt8 } from '@proj-airi/provider-inference'
@@ -194,8 +195,16 @@ function startProbe() {
 
 // The Live turns section shows the host. The offline microphone paths read it too.
 const host = useLiveVoiceHost()
-/** A starting host can take speech as soon as it runs, so the offline microphone waits for the start to end. */
-const hostClaimsMicrophone = computed(() => host.starting.value || host.takesSpeech.value)
+
+/** The clip that came from a selected live turn, so the clip display can name its turn. */
+const turnClip = shallowRef<{ samples: Float32Array<ArrayBuffer>, label: string }>()
+function takeTurnClip(utterance: UtteranceAudio, label: string) {
+  // The voice pipeline captures at the offline lab rate. Another rate cannot happen, so such a clip is not resampled.
+  if (utterance.sampleRate !== sampleRate)
+    return
+  input.clip.value = utterance.samples
+  turnClip.value = { samples: utterance.samples, label }
+}
 
 const liveSource = ref<'microphone' | 'clip'>('microphone')
 const liveSourceOptions = [
@@ -399,7 +408,7 @@ function compare() {
 
 <template>
   <div :class="['flex flex-col gap-8 pb-12']">
-    <LiveTurns :host="host" :microphone-busy="input.recording.value !== undefined || (listening && liveSource === 'microphone')" />
+    <LiveTurns :host="host" :microphone-busy="input.recording.value !== undefined || (listening && liveSource === 'microphone')" @select-utterance="takeTurnClip" />
 
     <div :class="['flex flex-col gap-2 border-t border-neutral-200 pt-6 dark:border-neutral-700']">
       <h2 :class="['text-xl font-semibold']">
@@ -577,7 +586,7 @@ function compare() {
             </template>
           </div>
           <div>
-            <Button v-if="!input.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="listening || hostClaimsMicrophone" @click="input.record" />
+            <Button v-if="!input.recording.value" icon="i-solar:microphone-3-bold-duotone" label="Record" :disabled="listening || host.takesSpeech.value" @click="input.record" />
             <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="input.stop" />
           </div>
         </div>
@@ -588,6 +597,7 @@ function compare() {
       <div v-if="input.clip.value" :class="['flex flex-wrap items-center gap-4 text-sm']">
         <audio :src="clipUrl" controls />
         <span>{{ clipSeconds.toFixed(1) }} s</span>
+        <span v-if="turnClip && turnClip.samples === input.clip.value" :class="['text-neutral-500 dark:text-neutral-400']">From {{ turnClip.label }}</span>
         <span v-if="clipSeconds > longClipSeconds" :class="['text-amber-600 dark:text-amber-400']">
           Long clip. Each decode takes about as long as the clip, so trim it for faster runs.
         </span>
@@ -673,7 +683,7 @@ function compare() {
             <Button
               v-if="!listening"
               variant="primary" color="primary" icon="i-solar:soundwave-bold-duotone" label="Start"
-              :disabled="!modelId || busy || boosting || input.recording.value !== undefined || (liveSource === 'clip' && !input.clip.value) || (liveSource === 'microphone' && hostClaimsMicrophone)"
+              :disabled="!modelId || busy || boosting || input.recording.value !== undefined || (liveSource === 'clip' && !input.clip.value) || (liveSource === 'microphone' && host.takesSpeech.value)"
               @click="startLive"
             />
             <Button v-else icon="i-solar:stop-bold" color="red" label="Stop" @click="live.stop()" />

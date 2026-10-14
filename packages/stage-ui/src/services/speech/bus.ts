@@ -148,6 +148,13 @@ export const voiceInputLevel = defineEventa<{ level: number }>('eventa:voice:inp
  */
 export const voiceLevelMonitor = defineEventa<{ until: number }>('eventa:voice:level-monitor')
 
+/**
+ * A window that runs its own voice host, for example a devtool, asks the hosts of other windows to stop listening.
+ * The lease lasts until `until`, a Unix time in milliseconds, and the holder renews it while its host runs.
+ * `until: 0` releases it. `holder` is the window ID, so the hosts of the holder's own window ignore the lease.
+ */
+export const voiceListeningLease = defineEventa<{ holder: string, until: number }>('eventa:voice:listening-lease')
+
 /** Recording commands address one session-owned voice message draft. */
 export type VoiceMessageCommand
   = {
