@@ -69,7 +69,8 @@ function cancel() {
         <span v-if="speechEndTs !== undefined && firstTokenTs !== undefined">{{ formatMs(firstTokenTs - speechEndTs) }} after the speech end</span>
         <span>Request {{ formatMs(spanMs(llm)) }}</span>
         <span>{{ metaNumber(llm, 'output_chunk_count') ?? '—' }} chunks</span>
-        <span v-if="llm.meta.cancelled === true" :class="['text-amber-600 dark:text-amber-400']">Cancelled</span>
+        <span v-if="llm.error" :class="['text-red-600 dark:text-red-400']">Failed: {{ llm.error }}</span>
+        <span v-else-if="llm.meta.cancelled === true" :class="['text-amber-600 dark:text-amber-400']">Cancelled</span>
       </div>
       <div v-if="activeTurn">
         <Button size="sm" icon="i-solar:stop-bold" label="Cancel the reply" @click="cancel" />
