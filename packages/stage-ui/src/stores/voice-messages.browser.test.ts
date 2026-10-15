@@ -22,7 +22,11 @@ vi.stubGlobal('BroadcastChannel', class extends BroadcastChannel {
 
 const cleanups: (() => void)[] = []
 
-/** The fake microphone can take more than the default second to open while other browser test files run. */
+// NOTICE:
+// The fake microphone can take more than the default poll second to open.
+// Other browser test files run in parallel in the same browser and slow it down.
+// Source: stage-ui voice browser test runs after #25 and #30.
+// Remove when browser test files run in separate browsers.
 const MICROPHONE_OPEN = { timeout: 5000 }
 
 afterEach(() => {
