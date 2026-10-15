@@ -5,6 +5,7 @@ import { providerInferenceProjects } from './packages/provider-inference/vitest.
 export default defineConfig({
   test: {
     projects: [
+      'integrations/youtube-live-chat',
       'server/apps/auth',
       'server/apps/api',
       'apps/ui-server-auth',
