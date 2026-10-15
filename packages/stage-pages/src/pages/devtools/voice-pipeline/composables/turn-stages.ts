@@ -52,31 +52,43 @@ export function metaNumber(span: IOSpan | undefined, key: string) {
   return typeof value === 'number' ? value : undefined
 }
 
+/**
+ * The stop reason of a clip that a new speech input stopped.
+ * The speech input attempt of core-agent interrupts with this cause, in `packages/core-agent/src/voice/input/attempt.ts`.
+ */
+export const SPEECH_INPUT_STOP_REASON = 'speech-input'
+
 /** One clip that stopped before its end, and the speech input that stopped it, when one did. */
 export interface BargeIn {
   playback: IOSpan
   reason?: string
-  /** The voice input that started while the clip played. */
+  /** The voice input that stopped the clip. */
   by?: { turn: IOTurn, input: IOSpan }
   /** From the start of that input to the end of the clip. It includes the fade. */
   stopMs?: number
 }
 
 /**
- * Finds the clips of `turn` that stopped early, and the speech input of another turn that started while each one played.
- * A clip stopped by a control, such as the stop button, has no such input.
+ * Finds the clips of `turn` that stopped early, and the speech input of another turn that stopped each one.
+ *
+ * Only a clip with the speech input stop reason has such an input. A clip stopped by a control, such as the stop
+ * button, has none. An input interrupts the reply at its start, so the input is the last one that started before
+ * the clip ended. The trace has no chat id, so an input of another chat that starts in the same fade can be chosen.
  */
 export function bargeIns(turn: IOTurn, turns: readonly IOTurn[]): BargeIn[] {
   return turnStages(turn).playback.filter(span => span.meta.interrupted === true).map((playback) => {
+    const reason = metaText(playback, 'interrupt_reason') || undefined
     const end = playback.endTs ?? Number.POSITIVE_INFINITY
-    const inputs = turns.flatMap((candidate) => {
-      const input = candidate === turn ? undefined : turnStages(candidate).voiceInput
-      return input && input.startTs >= playback.startTs && input.startTs <= end ? [{ turn: candidate, input }] : []
-    })
-    const by = inputs.toSorted((a, b) => a.input.startTs - b.input.startTs)[0]
+    const inputs = reason === SPEECH_INPUT_STOP_REASON
+      ? turns.flatMap((candidate) => {
+          const input = candidate === turn ? undefined : turnStages(candidate).voiceInput
+          return input && input.startTs >= playback.startTs && input.startTs <= end ? [{ turn: candidate, input }] : []
+        })
+      : []
+    const by = inputs.toSorted((a, b) => b.input.startTs - a.input.startTs)[0]
     return {
       playback,
-      reason: metaText(playback, 'interrupt_reason') || undefined,
+      reason,
       by,
       stopMs: by && playback.endTs !== undefined ? playback.endTs - by.input.startTs : undefined,
     }
