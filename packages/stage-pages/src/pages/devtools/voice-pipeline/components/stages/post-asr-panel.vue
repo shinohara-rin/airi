@@ -70,7 +70,9 @@ const prettyContext = computed(() => {
         </div>
       </div>
       <div v-if="rephrase" :class="['flex flex-wrap gap-x-4 text-xs text-neutral-500 dark:text-neutral-400']">
-        <span>Rephrase changed {{ metaNumber(rephrase, 'changed_count') ?? '—' }} of {{ metaNumber(rephrase, 'segment_count') ?? '—' }} segments</span>
+        <span v-if="rephrase.error" :class="['text-red-600 dark:text-red-400']">Rephrase failed: {{ rephrase.error }}</span>
+        <span v-else-if="rephrase.meta.cancelled === true">Rephrase was cancelled</span>
+        <span v-else>Rephrase changed {{ metaNumber(rephrase, 'changed_count') ?? '—' }} of {{ metaNumber(rephrase, 'segment_count') ?? '—' }} segments</span>
         <span :class="['font-mono']">{{ metaText(rephrase, 'model') ?? '' }}</span>
         <span>{{ formatMs(spanMs(rephrase)) }}</span>
       </div>

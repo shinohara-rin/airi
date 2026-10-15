@@ -63,7 +63,8 @@ const finalText = computed(() => props.record?.submission?.transcript.raw.text ?
         <span>Provider <span :class="['font-mono']">{{ metaText(recognition, 'name') ?? '—' }}</span></span>
         <span>Model <span :class="['font-mono']">{{ metaText(recognition, 'model') ?? '—' }}</span></span>
         <span>Request {{ formatMs(spanMs(recognition)) }}</span>
-        <span v-if="speechEndTs !== undefined && recognition.endTs !== undefined">Final {{ formatMs(recognition.endTs - speechEndTs) }} after the speech end</span>
+        <span v-if="recognition.error" :class="['text-red-600 dark:text-red-400']">Failed: {{ recognition.error }}</span>
+        <span v-else-if="speechEndTs !== undefined && recognition.endTs !== undefined">Final {{ formatMs(recognition.endTs - speechEndTs) }} after the speech end</span>
         <span v-if="recognition.meta.abort === true" :class="['text-amber-600 dark:text-amber-400']">Aborted</span>
       </div>
       <div :class="['flex flex-col gap-1']">
@@ -94,7 +95,7 @@ const finalText = computed(() => props.record?.submission?.transcript.raw.text ?
         <span v-else :class="['text-sm text-neutral-500 dark:text-neutral-400']">No revisions. Only inputs of this page's voice host are recorded.</span>
       </div>
       <p :class="['rounded-lg bg-neutral-100 p-3 text-sm dark:bg-neutral-800']">
-        <span :class="['text-xs text-neutral-500']">Final · </span>{{ finalText || '(no words)' }}
+        <span :class="['text-xs text-neutral-500']">{{ recognition?.error ? 'Failed · ' : 'Final · ' }}</span>{{ finalText || '(no words)' }}
       </p>
 
       <div :class="['flex flex-wrap items-center gap-3']">
