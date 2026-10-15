@@ -22,6 +22,9 @@ vi.stubGlobal('BroadcastChannel', class extends BroadcastChannel {
 
 const cleanups: (() => void)[] = []
 
+/** The fake microphone can take more than the default second to open while other browser test files run. */
+const MICROPHONE_OPEN = { timeout: 5000 }
+
 afterEach(() => {
   cleanups.splice(0).reverse().forEach(cleanup => cleanup())
   localStorage.clear()
@@ -64,7 +67,7 @@ describe('voice messages host', () => {
     const command = defineInvoke(getSpeechBusContext(), voiceMessageCommand)
 
     await command({ type: 'record', id: 'message', sessionId: 'alice', replyToMessageId: 'reply-target' })
-    await expect.poll(() => latest()[0]?.phase).toBe('capturing')
+    await expect.poll(() => latest()[0]?.phase, MICROPHONE_OPEN).toBe('capturing')
     expect(store.isRecording).toBe(true)
 
     // The test has no chat session or provider, so the send fails after encoding. The host must keep the recording.
@@ -83,7 +86,7 @@ describe('voice messages host', () => {
     const bus = getSpeechBusContext()
 
     await defineInvoke(bus, voiceMessageCommand)({ type: 'record', id: 'message', sessionId: 'alice' })
-    await expect.poll(() => latest()[0]?.phase).toBe('capturing')
+    await expect.poll(() => latest()[0]?.phase, MICROPHONE_OPEN).toBe('capturing')
     bus.emit(voiceListeningLease, { holder: 'devtool-window', until: Date.now() + 60_000 })
 
     await expect.poll(() => latest()).toEqual([])
@@ -95,7 +98,7 @@ describe('voice messages host', () => {
     const command = defineInvoke(getSpeechBusContext(), voiceMessageCommand)
 
     await command({ type: 'record', id: 'message', sessionId: 'alice' })
-    await expect.poll(() => latest()[0]?.phase).toBe('capturing')
+    await expect.poll(() => latest()[0]?.phase, MICROPHONE_OPEN).toBe('capturing')
     await command({ type: 'finish', id: 'message' })
 
     await expect.poll(() => latest()[0]?.phase).toBe('ready')
