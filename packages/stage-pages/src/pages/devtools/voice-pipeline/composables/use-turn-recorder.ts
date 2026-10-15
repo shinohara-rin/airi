@@ -59,9 +59,10 @@ export function useTurnRecorder() {
   })
 
   // An observer plugin reads each raw revision. It writes nothing, so the turn does not change.
+  // Ordered scheduling keeps every revision. The latest scheduling drops the ones that arrive while a callback runs.
   const plugin = voice.controller.use({ name: 'devtool-turn-recorder', setup(scope) {
     scope.onSpeechInput((input) => {
-      input.subscribe({ transcript: 'raw', scheduling: 'latest' }, async (ctx) => {
+      input.subscribe({ transcript: 'raw', scheduling: 'ordered' }, async (ctx) => {
         const text = ctx.snapshot.transcript.text
         // The first snapshot comes before any recognition, with empty text. It is not a revision.
         update(input.inputId, record => (record.partials.at(-1)?.text ?? '') === text ? {} : { partials: [...record.partials, { ts: Date.now(), text }] })
