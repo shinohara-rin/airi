@@ -63,6 +63,8 @@ export const IOAttributes = {
   VADAborted: `${customPrefix}.vad.aborted`,
   ASRText: `${customPrefix}.asr.text`,
   ASRAbort: `${customPrefix}.asr.abort`,
+  /** The hotwords that the request sent to a provider that takes them. */
+  ASRHotwords: `${customPrefix}.asr.hotwords`,
   LLMInputMessageCount: `${customPrefix}.llm.input_message_count`,
   LLMInputMessageRoles: `${customPrefix}.llm.input_message_roles`,
   LLMInputUserMessageCount: `${customPrefix}.llm.input_user_message_count`,
