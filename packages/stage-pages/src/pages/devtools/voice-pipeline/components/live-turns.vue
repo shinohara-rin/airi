@@ -444,7 +444,7 @@ const panels = [
           <EndOfTurnPanel v-else-if="panel.id === 'end'" :turn="selected?.turn" :stages="selectedStages" :turns="turns" />
           <PostAsrPanel v-else-if="panel.id === 'post'" :stages="selectedStages" :record="selectedRecord" :speech-context="selectedContext" />
           <LlmPanel v-else-if="panel.id === 'llm'" :stages="selectedStages" :record="selectedRecord" :speech-end-ts="selected?.timing.speechEndTs" />
-          <TtsPanel v-else :stages="selectedStages" :session-id="selectedRecord?.submission?.sessionId ?? sessions.activeSessionId" />
+          <TtsPanel v-else :stages="selectedStages" :session-id="selectedRecord?.submission?.sessionId" />
         </section>
       </div>
     </div>

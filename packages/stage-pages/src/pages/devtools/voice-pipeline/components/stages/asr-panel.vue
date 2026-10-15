@@ -88,6 +88,7 @@ const finalText = computed(() => props.record?.submission?.transcript.raw.text ?
           <div v-for="(partial, index) in record.partials" :key="index" :class="['flex gap-3']">
             <span :class="['shrink-0 font-mono text-xs text-neutral-500']">+{{ formatMs(partial.ts - record.startTs) }}</span>
             <span>{{ partial.text || '(empty)' }}</span>
+            <span v-if="partial.final" :class="['shrink-0 text-xs text-neutral-500']">final</span>
           </div>
         </div>
         <span v-else :class="['text-sm text-neutral-500 dark:text-neutral-400']">No revisions. Only inputs of this page's voice host are recorded.</span>

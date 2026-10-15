@@ -14,8 +14,8 @@ export interface InputRecord {
   readonly inputId: string
   /** Milliseconds since the epoch. */
   readonly startTs: number
-  /** Each raw transcript revision, as speech recognition streamed it. */
-  readonly partials: readonly { readonly ts: number, readonly text: string }[]
+  /** Each raw transcript revision, as speech recognition streamed it. `final` marks a revision whose segments are all final. */
+  readonly partials: readonly { readonly ts: number, readonly revision: number, readonly text: string, readonly final: boolean }[]
   /** The submission after the post-ASR plugins ran. A cancelled or failed input has none. */
   readonly submission?: SpeechSubmission
   /** The chat turn that the submission became: the committed message, or the draft that it joined. */
@@ -63,9 +63,12 @@ export function useTurnRecorder() {
   const plugin = voice.controller.use({ name: 'devtool-turn-recorder', setup(scope) {
     scope.onSpeechInput((input) => {
       input.subscribe({ transcript: 'raw', scheduling: 'ordered' }, async (ctx) => {
-        const text = ctx.snapshot.transcript.text
-        // The first snapshot comes before any recognition, with empty text. It is not a revision.
-        update(input.inputId, record => (record.partials.at(-1)?.text ?? '') === text ? {} : { partials: [...record.partials, { ts: Date.now(), text }] })
+        const { revision, text, segments } = ctx.snapshot.transcript
+        const final = segments.length > 0 && segments.every(segment => segment.final)
+        // A context change sends the same revision again. Revision 0 comes before any recognition.
+        update(input.inputId, record => revision === 0 || record.partials.at(-1)?.revision === revision
+          ? {}
+          : { partials: [...record.partials, { ts: Date.now(), revision, text, final }] })
       })
       return undefined
     })

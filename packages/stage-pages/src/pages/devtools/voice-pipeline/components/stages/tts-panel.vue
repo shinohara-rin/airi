@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { IOSpan } from '@proj-airi/stage-shared'
+
 import type { TurnStages } from '../../composables/turn-stages'
 
 import { errorMessageFrom } from '@moeru/std'
@@ -38,19 +40,33 @@ const speech = computed(() => {
   }
 })
 
+/** The result of a clip that played, or nothing before playback. */
+function playbackStatus(played: IOSpan | undefined) {
+  if (!played)
+    return undefined
+  if (played.error)
+    return `playback failed: ${played.error}`
+  if (played.meta.interrupted === true)
+    return 'stopped early'
+  return played.endTs === undefined ? 'playing' : 'played'
+}
+
+/**
+ * One row for each synthesis request and one row for each clip that no request matches.
+ * A streaming provider synthesizes the whole reply in one request without a segment id, so its clips get their own rows.
+ */
 const segments = computed(() => {
   const playback = props.stages?.playback ?? []
-  return (props.stages?.synthesis ?? []).map((span) => {
-    const played = playback.find(clip => clip.ttsCorrelationId !== undefined && clip.ttsCorrelationId === span.ttsCorrelationId)
-    let status = 'synthesized'
-    if (span.meta.no_audio === true)
+  const synthesis = props.stages?.synthesis ?? []
+  const requested = synthesis.map((span) => {
+    const played = span.ttsCorrelationId === undefined ? undefined : playback.find(clip => clip.ttsCorrelationId === span.ttsCorrelationId)
+    let status = playbackStatus(played) ?? (span.ttsCorrelationId === undefined ? 'streamed' : 'synthesized')
+    if (span.error)
+      status = `failed: ${span.error}`
+    else if (span.meta.no_audio === true)
       status = 'no audio'
     else if (span.meta.canceled === true)
       status = 'cancelled'
-    else if (played?.meta.interrupted === true)
-      status = 'stopped early'
-    else if (played)
-      status = played.endTs === undefined ? 'playing' : 'played'
     return {
       id: span.id,
       text: metaText(span, 'text') ?? '',
@@ -61,6 +77,17 @@ const segments = computed(() => {
       status,
     }
   })
+  const matched = new Set(synthesis.flatMap(span => span.ttsCorrelationId === undefined ? [] : [span.ttsCorrelationId]))
+  const streamed = playback.filter(clip => clip.ttsCorrelationId === undefined || !matched.has(clip.ttsCorrelationId)).map(clip => ({
+    id: clip.id,
+    text: metaText(clip, 'text') ?? '',
+    reason: undefined,
+    synthesisMs: undefined,
+    audioMs: spanMs(clip),
+    waitMs: undefined,
+    status: `streamed clip, ${playbackStatus(clip)}`,
+  }))
+  return [...requested, ...streamed]
 })
 </script>
 

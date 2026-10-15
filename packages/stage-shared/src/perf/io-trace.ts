@@ -135,6 +135,8 @@ export interface IOSpan {
   meta: Record<string, any>
   /** OTel events attached to the span. */
   events?: IOSpanEvent[]
+  /** The status message of a span that ended with the error status. A span without an error has none. */
+  error?: string
 }
 
 export interface IOTurn {
