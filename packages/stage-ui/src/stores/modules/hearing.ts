@@ -631,6 +631,7 @@ export const useHearingStore = defineStore('hearing-store', () => {
     }, {
       ...trace,
       attributes: bias => ({
+        ...trace.attributes?.(bias),
         [IOAttributes.GenAIProviderName]: providerId,
         ...(model ? { [IOAttributes.GenAIRequestModel]: model } : {}),
         ...(sendsHotwords(bias) ? { [IOAttributes.ASRHotwords]: [...bias.phrases] } : {}),
